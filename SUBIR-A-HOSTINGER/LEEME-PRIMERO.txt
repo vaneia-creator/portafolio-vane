@@ -1,0 +1,9 @@
+Esta carpeta contiene la versión publicada del portafolio de Vane.
+
+INSTRUCCIONES:
+1. Abre el administrador de archivos de Hostinger.
+2. Entra en la carpeta public_html.
+3. Sube TODO el contenido de esta carpeta, no la carpeta contenedora.
+4. Comprueba que index.html quede directamente dentro de public_html.
+
+El archivo .htaccess puede aparecer oculto en Windows. No lo elimines.
