@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Crear bots · Vane.IA — Bots que conversan por tu marca</title>
-<meta name="description" content="Diseño bots y agentes conversacionales para WhatsApp e Instagram: responden 24/7, califican leads, agendan citas y toman pedidos. Pruébalo aquí mismo." />
+<meta name="description" content="Diseño bots y agentes conversacionales para WhatsApp: responden 24/7, califican leads, agendan citas y toman pedidos. Pruébalo aquí mismo." />
 <meta property="og:title" content="Crear bots · Vane.IA" />
 <meta property="og:description" content="Bots que conversan por tu marca. Pruébalo aquí mismo." />
 <meta property="og:image" content="/og.jpg" />
@@ -176,7 +176,7 @@
     <div>
       <span class="kicker"><span class="dot"></span> Automatización · IA · WhatsApp</span>
       <h1>Bots que <em>conversan</em><br/>por tu <span class="script">marca.</span></h1>
-      <p class="heroCopy">Diseño agentes conversacionales para WhatsApp e Instagram que responden 24/7, califican clientes, agendan citas y toman pedidos — con la voz de tu marca.</p>
+      <p class="heroCopy">Diseño agentes conversacionales para WhatsApp que responden 24/7, califican clientes, agendan citas y toman pedidos — con la voz de tu marca.</p>
       <div class="ctaRow">
         <a class="btn primary" href="#demo">Prueba el demo ↘</a>
         <a class="btn ghost" href="https://wa.me/34641261895?text=Hola%20Vane%2C%20quiero%20un%20bot%20para%20mi%20marca" target="_blank" rel="noreferrer">Quiero uno para mí</a>
@@ -186,7 +186,7 @@
     <!-- DEMO CHAT -->
     <div id="demo" class="phone">
       <div class="phoneBar">
-        <div class="who"><span class="av">✦</span> Bot de Vane.IA</div>
+        <div class="who"><span class="av">✦</span> Kairo · asistente de Vane.IA</div>
         <span class="status"><i></i> en línea</span>
       </div>
       <div class="screen">
@@ -223,7 +223,7 @@
   <div class="steps">
     <div class="step"><b>01</b><h3>Entiendo tu marca</h3><p>Definimos qué debe resolver el bot, su tono y las preguntas clave de tus clientes.</p></div>
     <div class="step"><b>02</b><h3>Diseño los flujos</h3><p>Construyo las conversaciones, las respuestas y la captación de datos con tu voz.</p></div>
-    <div class="step"><b>03</b><h3>Conecto y lanzo</h3><p>Lo integro a tu WhatsApp o Instagram, lo pruebo contigo y queda funcionando.</p></div>
+    <div class="step"><b>03</b><h3>Conecto y lanzo</h3><p>Lo integro a tu WhatsApp, lo pruebo contigo y queda funcionando.</p></div>
   </div>
 </section>
 
@@ -270,7 +270,7 @@
         {t:'📅 Quiero reservar una cita', go:'reserva'},
         {t:'💸 ¿Cuánto cuesta un bot?', go:'precio'},
         {t:'🛍️ Vendo productos', go:'venta'},
-        {t:'🙋 Hablar con Vane', go:'humano'}
+        {t:'🙋 Hablar con Kairo', go:'humano'}
       ]
     },
     reserva: {
@@ -281,7 +281,7 @@
     reserva2:{
       user:'Entre semana',
       bot:['Perfecto ✅ Te reservé un espacio tentativo y te enviaré un recordatorio.','Así de fácil sería para tus clientes. ¿Vemos otra cosa?'],
-      chips:[{t:'💸 Ver precios', go:'precio'},{t:'🙋 Hablar con Vane', go:'humano'},{t:'↺ Empezar de nuevo', go:'start', reset:true}]
+      chips:[{t:'💸 Ver precios', go:'precio'},{t:'🙋 Hablar con Kairo', go:'humano'},{t:'↺ Empezar de nuevo', go:'start', reset:true}]
     },
     precio:{
       user:'¿Cuánto cuesta un bot?',
@@ -294,8 +294,8 @@
       chips:[{t:'Sí, me interesa', go:'humano'},{t:'📅 Mejor uno de reservas', go:'reserva'},{t:'↺ Empezar de nuevo', go:'start', reset:true}]
     },
     humano:{
-      user:'Quiero hablar con Vane',
-      bot:['¡Perfecto! 🙋 Te conecto con Vane ahora mismo.','Toca el botón y sigamos por WhatsApp 👇'],
+      user:'Quiero hablar con Kairo',
+      bot:['¡Perfecto! 🙋 Kairo, el asistente de Vane, sigue contigo por WhatsApp.','Toca el botón y seguimos la conversación 👇'],
       cta:true,
       chips:[{t:'↺ Empezar de nuevo', go:'start', reset:true}]
     }
@@ -359,7 +359,7 @@
   }
 
   // Arranque
-  addBubble('bot','¡Hola! 👋 Soy un bot de demostración hecho por Vane.');
+  addBubble('bot','¡Hola! 👋 Soy Kairo, el asistente de Vane (demostración).');
   setTimeout(function(){
     addBubble('bot','Elige una opción y mira cómo respondo 👇');
     setChips(FLOWS.start.chips);
