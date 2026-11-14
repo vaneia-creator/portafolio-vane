@@ -118,7 +118,7 @@ export async function transcribeAndAnnotate(project, reel, { archivo, onLog } = 
   }
   if (!tr.words.length) throw new Error('Dato insuficiente: la transcripción no contiene palabras (reel sin voz o solo con música).');
   onLog(`Anotando gatillos (${tr.words.length} palabras)…`);
-  const r = await llmJSON({ ...P.promptAnotador(project, reel, tr.words), maxTokens: 6000 }, onLog);
+  const r = await llmJSON({ ...P.promptAnotador(project, reel, tr.words), maxTokens: 4000 }, onLog);
   const { anotaciones, rechazados } = buildAnnotations(reel.id, tr.words, r.json?.segmentos);
   if (!anotaciones.length) throw new Error(`El LLM (${r.proveedor}) no devolvió segmentos válidos. Vuelve a intentarlo.`);
   const viejas = (await db.byProject('annotations', project.id)).filter((a) => a.reel_id === reel.id);
@@ -193,7 +193,7 @@ export async function addManual(project, texto, url, fecha) {
 }
 
 // ---------- M1: extracción y agrupación ----------
-const LOTE = 20;
+const LOTE = 12; // cabe en el límite gratuito de Groq (8.000 tokens por minuto, sumando entrada y salida)
 
 export async function extractPains(project, onLog, debeParar = () => false) {
   const pendientes = (await db.byProject('comments', project.id)).filter((c) => !c.procesado && c.texto);
@@ -202,7 +202,7 @@ export async function extractPains(project, onLog, debeParar = () => false) {
     if (debeParar()) break;
     const lote = pendientes.slice(i, i + LOTE);
     onLog(`Extrayendo dolores: comentarios ${i + 1}–${i + lote.length} de ${pendientes.length}…`);
-    const r = await llmJSON({ ...P.promptExtractor(lote), maxTokens: 5000 }, onLog);
+    const r = await llmJSON({ ...P.promptExtractor(lote), maxTokens: 3500 }, onLog);
     const v = verifyPainItems(lote, r.json?.dolores);
     if (v.menciones.length) await db.put('pain_mentions', v.menciones.map((m) => ({ ...m, cluster_id: null, generado_por: `${r.proveedor} · ${r.modelo}`, generado: r.fecha })));
     // Privacidad: una vez procesado, el texto completo del comentario se borra; queda solo la cita corta.
@@ -223,7 +223,7 @@ export async function clusterPains(project, onLog) {
   for (let i = 0; i < unicos.length; i += TROZO) {
     const trozo = unicos.slice(i, i + TROZO);
     onLog(`Agrupando dolores ${i + 1}–${i + trozo.length} de ${unicos.length}…`);
-    const r = await llmJSON({ ...P.promptAgrupador(trozo, nombres), maxTokens: 5000 }, onLog);
+    const r = await llmJSON({ ...P.promptAgrupador(trozo, nombres), maxTokens: 3500 }, onLog);
     por = `${r.proveedor} · ${r.modelo}`;
     for (const a of r.json?.asignaciones || []) {
       const idx = Number(a?.i);
@@ -301,7 +301,7 @@ export async function generateScript(project, redKey, cluster, menciones, onLog)
   if (!patrones.length) throw new Error('Dato insuficiente: no hay patrones. Transcribe y anota al menos un reel en la pestaña Reels.');
   const citas = topCitas(menciones, cluster.id, 5);
   const usados = patrones.slice(0, 25);
-  const r = await llmJSON({ ...P.promptGuion(project, redKey, red, cluster, citas, usados), maxTokens: 5000 }, onLog);
+  const r = await llmJSON({ ...P.promptGuion(project, redKey, red, cluster, citas, usados), maxTokens: 4000 }, onLog);
   const transcripts = await db.byProject('transcripts', project.id);
   const validacion = validateScript(r.json, red, usados.map((p) => p.id), transcripts);
   const filas = (r.json?.filas || []).map((f) => ({ ...f, patron: usados.find((p) => p.id === f.patron_id) || null }));

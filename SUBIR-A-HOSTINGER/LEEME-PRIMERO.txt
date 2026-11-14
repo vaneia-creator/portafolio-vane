@@ -7,3 +7,10 @@ INSTRUCCIONES:
 4. Comprueba que index.html quede directamente dentro de public_html.
 
 El archivo .htaccess puede aparecer oculto en Windows. No lo elimines.
+
+RADAR DE DOLORES Y REELS (carpeta "radar"):
+Es la app de investigación de mercado y análisis de reels. Al subir esta carpeta
+queda disponible en  tu-dominio/radar/
+La primera vez abre "Configuración" y pega tus claves gratuitas de Apify y Groq
+(la app explica dónde conseguir cada una). Las claves y los proyectos se guardan
+solo en tu navegador.

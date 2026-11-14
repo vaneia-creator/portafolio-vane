@@ -60,7 +60,7 @@ Devuelve: {"segmentos": [{…}]}`,
 }
 
 export function promptExtractor(comentarios) {
-  const lista = comentarios.map((c, i) => `[${i}] ${c.texto.slice(0, 600).replace(/\s+/g, ' ')}`).join('\n');
+  const lista = comentarios.map((c, i) => `[${i}] ${c.texto.slice(0, 500).replace(/\s+/g, ' ')}`).join('\n');
   return {
     system: `Eres un analista de investigación de mercado. ${REGLAS}`,
     user: `Comentarios reales, numerados:

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Radar de Dolores y Reels · Vane.IA</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="eyebrow"><span class="dot"></span> Vane.IA</span>
+    <h1>Radar de Dolores y Reels</h1>
+  </div>
+  <div class="projectPick">
+    <label for="projectSel">Proyecto</label>
+    <select id="projectSel"></select>
+  </div>
+</header>
+<nav class="tabs" id="tabs" aria-label="Secciones"></nav>
+<main id="view" tabindex="-1"></main>
+<section class="activity" id="activity" aria-live="polite">
+  <button class="activityHead" id="activityToggle" type="button" aria-expanded="false">
+    <span id="activityState">Actividad</span><span class="chev" aria-hidden="true">▴</span>
+  </button>
+  <ol id="activityLog"></ol>
+</section>
+<noscript><p style="padding:2rem">Esta app necesita JavaScript.</p></noscript>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
