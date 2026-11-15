@@ -1,7 +1,7 @@
 // M2: métricas reales, ranking por fórmula, transcripción y anotación de gatillos.
 
-import { h, btn, note, fmt, table, link, empty, fnChip, etiquetaPill, download, toCSV } from './dom.js';
-import { db, getSettings } from '../services/store.js';
+import { h, btn, note, input, fmt, table, link, empty, fnChip, etiquetaPill, download, toCSV } from './dom.js';
+import { db, getSettings, saveSettings } from '../services/store.js';
 import { ingestMetrics, ranking, transcribeAndAnnotate, costoEstimado } from '../pipeline.js';
 import { embedUrl } from '../core/normalize.js';
 import { TAXONOMY } from '../core/config.js';
@@ -48,15 +48,27 @@ export async function viewReels(app) {
   // --- Ingesta ---
   const ig = creators.filter((c) => c.plataforma === 'instagram').length;
   const tt = creators.length - ig;
-  const porPerfil = s.thresholds.medianWindow + 6;
+  const porPerfil = s.captura.reelsPorCuenta;
   const est = (ig ? costoEstimado('igProfiles', ig) + costoEstimado('igReels', ig * porPerfil) : 0) + (tt ? costoEstimado('ttVideos', tt * porPerfil) : 0);
   const ing = h('section', { class: 'card' },
     h('h2', {}, 'Métricas de los reels'),
-    h('p', { class: 'hint' }, `Trae de Apify los últimos ${porPerfil} reels de cada referente (${creators.length} cuenta(s)) con sus cifras públicas reales. Cada captura queda guardada con fecha para medir la velocidad en capturas posteriores.`));
+    h('p', { class: 'hint' }, 'Este paso solo trae números (vistas, likes, comentarios) para saber qué es "normal" en cada cuenta y detectar cuáles destacan. No transcribe ni analiza nada todavía: eso se hace después y solo con los reels que tú elijas del top.'));
+  const nReels = input({ type: 'number', min: '8', max: '50', value: porPerfil });
+  nReels.addEventListener('change', async () => {
+    const v = Math.min(50, Math.max(8, Math.round(Number(nReels.value)) || 20));
+    saveSettings({ captura: { ...getSettings().captura, reelsPorCuenta: v } });
+    await app.render();
+  });
   if (!creators.length) ing.append(empty('Añade referentes en la pestaña Proyecto.'));
   else {
     ing.append(
-      h('p', { class: 'hint' }, `Costo máximo estimado de esta captura: ${fmt.usd(est)} de tu crédito de Apify (tarifas del plan Free; la ejecución se detiene si lo supera).`),
+      h('div', { class: 'row' }, h('label', { class: 'field', style: 'flex:0 1 230px' }, h('span', {}, 'Reels a revisar por cuenta'), nReels, h('small', {}, 'Entre 8 y 50. Menos reels = menos crédito.'))),
+      h('p', { class: 'hint' }, `Con ${porPerfil} reels × ${creators.length} cuenta(s), el costo máximo estimado es ${fmt.usd(est)} de tu crédito de Apify (tarifas del plan Free; la ejecución se detiene si lo supera).`),
+      porPerfil < s.thresholds.minReels + 3
+        ? note('warn', `Para comparar con fiabilidad se exigen ${s.thresholds.minReels} reels con más de ${s.thresholds.minAgeDays} días por cuenta, y con ${porPerfil} no alcanza. `,
+          btn(`Bajar el mínimo exigido a ${Math.max(5, porPerfil - 3)}`, async () => { saveSettings({ thresholds: { ...getSettings().thresholds, minReels: Math.max(5, porPerfil - 3) } }); await app.render(); }, 'small alt'),
+          ' Con pocos reels la mediana es menos estable.')
+        : null,
       h('div', { class: 'row' }, btn(reels.length ? 'Volver a capturar métricas' : 'Traer métricas', () => {
         if (!s.keys.apify) { alert('Falta el token de Apify (Configuración).'); return; }
         app.run('Captura de métricas', async (log) => {
@@ -122,13 +134,22 @@ export async function viewReels(app) {
     h('p', { class: 'hint' }, 'Orden por Score, con desempate por velocidad. Con los mismos datos el ranking sale siempre igual. EV "parcial" significa que la red no publica todos los campos (Instagram no publica guardados).'));
   if (!R.rows.length) rank.append(note('warn', 'Dato insuficiente: ningún creador alcanza el mínimo de reels elegibles. Añade referentes con más publicaciones.'));
   else {
-    const pend = top.filter((x) => !conAnot.has(x.reel_id));
+    const nTop = Math.min(s.captura.topAnalizar, top.length);
+    const pend = top.slice(0, nTop).filter((x) => !conAnot.has(x.reel_id));
+    const selTop = input({ type: 'number', min: '1', max: '10', value: s.captura.topAnalizar });
+    selTop.addEventListener('change', async () => {
+      const v = Math.min(10, Math.max(1, Math.round(Number(selTop.value)) || 5));
+      saveSettings({ captura: { ...getSettings().captura, topAnalizar: v } });
+      await app.render();
+    });
     rank.append(
       h('div', { class: 'row' },
-        pend.length ? btn(`Transcribir y analizar el top ${top.length} (${pend.length} pendientes)`, () => analizar(pend, 'Análisis del top')) : h('span', { class: 'pill ok' }, 'Top analizado'),
+        h('label', { class: 'field', style: 'flex:0 1 210px' }, h('span', {}, 'Cuántos del top analizar'), selTop),
+        pend.length ? btn(`Transcribir y analizar los ${nTop} primeros (${pend.length} pendientes)`, () => analizar(pend, 'Análisis del top')) : h('span', { class: 'pill ok' }, `Los ${nTop} primeros ya están analizados`),
         btn('Descargar ranking (CSV)', () => download('ranking-reels.csv', toCSV(csvCols, R.rows), 'text/csv'), 'alt')),
       h('h3', {}, `Top ${top.length}`),
-      table([...cols, { h: 'Análisis', v: estado }, { h: '', v: (x) => btn('Abrir', () => { app.state.reelId = x.reel_id; app.render().then(() => document.getElementById('reelDetail')?.scrollIntoView({ behavior: 'smooth' })); }, 'small alt') }], top));
+      table([...cols, { h: 'Análisis', v: estado }, { h: '', v: (x) => btn('Abrir', () => { app.state.reelId = x.reel_id; app.render().then(() => document.getElementById('reelDetail')?.scrollIntoView({ behavior: 'smooth' })); }, 'small alt') }], top),
+      h('p', { class: 'hint' }, 'También puedes abrir cualquier reel de la lista y analizarlo por separado con el botón "Transcribir y anotar".'));
     if (R.rows.length > top.length) {
       rank.append(h('details', {}, h('summary', {}, `Ver los ${R.rows.length} reels rankeados`),
         table([...cols, { h: '', v: (x) => btn('Abrir', () => { app.state.reelId = x.reel_id; app.render(); }, 'small alt') }], R.rows)));

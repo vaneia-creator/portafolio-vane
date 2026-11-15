@@ -27,8 +27,8 @@ export async function ingestMetrics(project, onLog) {
   const th = getSettings().thresholds;
   const creators = await db.byProject('creators', project.id);
   if (!creators.length) throw new Error('Añade al menos un referente antes de traer métricas.');
-  // Se piden algunos reels de más porque los de menos de 7 días se excluyen del ranking.
-  const porPerfil = th.medianWindow + 6;
+  // Cuántos reels por cuenta lo decide el usuario (pestaña Reels).
+  const porPerfil = getSettings().captura.reelsPorCuenta;
   const capturado = ahora();
   const resumen = [];
 

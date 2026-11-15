@@ -20,6 +20,7 @@ export function getSettings() {
     models: { ...DEFAULT_MODELS, ...(s.models || {}) },
     thresholds: { ...DEFAULT_THRESHOLDS, ...(s.thresholds || {}) },
     currentProject: s.currentProject || null,
+    captura: { reelsPorCuenta: 20, topAnalizar: 5, ...(s.captura || {}) },
   };
 }
 export function saveSettings(patch) {

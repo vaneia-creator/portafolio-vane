@@ -136,6 +136,7 @@ assert.equal(await page.locator('section.card:has(h2:has-text("Referentes")) tbo
 console.log('OK proyecto y 3 referentes');
 
 await tab('2 · Reels virales');
+await page.fill('section.card:has(h2:has-text("Métricas de los reels")) input[type=number]', '36'); await page.keyboard.press('Tab'); await page.waitForTimeout(300);
 await run('Traer métricas');
 const rows = page.locator('section.card:has(h2:has-text("Ranking de viralidad")) .tableWrap').first().locator('tbody tr');
 assert.equal(await rows.count(), 10, await lastLog());
@@ -149,7 +150,7 @@ assert.deepEqual(await page.locator('section.card:has(h2:has-text("Ranking de vi
 console.log('OK ranking: top 10, Mega-viral primero, muestra insuficiente detectada, idéntico tras recargar');
 await page.screenshot({ path: `${SHOTS}/reels.png`, fullPage: true });
 
-await page.click('button:has-text("Transcribir y analizar el top")'); await page.waitForTimeout(200); await idle();
+await page.click('button:has-text("Transcribir y analizar los 5 primeros")'); await page.waitForTimeout(200); await idle();
 await page.locator('section.card:has(h2:has-text("Ranking de viralidad")) button:has-text("Abrir")').first().click();
 await page.waitForSelector('#reelDetail .seg');
 assert.equal(await page.locator('#reelDetail .seg').count(), 5, 'el segmento con índices fuera de rango se descarta');
