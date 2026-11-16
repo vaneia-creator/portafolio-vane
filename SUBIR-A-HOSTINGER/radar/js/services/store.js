@@ -10,8 +10,16 @@ const readLS = (k, def) => {
   try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; }
 };
 const writeLS = (k, v) => {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* almacenamiento no disponible */ }
+  try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; }
 };
+
+/** ¿Este navegador conserva lo guardado? (falla en modo incógnito estricto o con el almacenamiento bloqueado) */
+export function storageOk() {
+  try { localStorage.setItem('radar.test', '1'); const ok = localStorage.getItem('radar.test') === '1'; localStorage.removeItem('radar.test'); return ok; }
+  catch { return false; }
+}
+/** Pide al navegador que no borre los datos de la app al liberar espacio. */
+export function pedirPersistencia() { try { navigator.storage?.persist?.(); } catch { /* no disponible */ } }
 
 export function getSettings() {
   const s = readLS(LS_SETTINGS, {});

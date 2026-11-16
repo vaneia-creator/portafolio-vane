@@ -2,7 +2,7 @@
 
 import { h, field, input, btn, note, fmt, download } from './dom.js';
 import { DEFAULT_THRESHOLDS, THRESHOLD_LABELS, DEFAULT_MODELS, DAILY_LIMITS, formulaVersion } from '../core/config.js';
-import { getSettings, saveSettings, getCounters, db } from '../services/store.js';
+import { getSettings, saveSettings, getCounters, db, storageOk, pedirPersistencia } from '../services/store.js';
 import { apifyAccount } from '../services/apify.js';
 import { testProveedor } from '../services/llm.js';
 import { ytTest } from '../services/media.js';
@@ -47,12 +47,37 @@ export async function viewConfig(app) {
   // --- Claves ---
   const claves = h('section', { class: 'card' },
     h('h2', {}, 'Claves de acceso'),
-    h('p', { class: 'hint' }, 'Todas son gratuitas. Se guardan solo en este navegador y se envían únicamente a su proveedor. Para empezar bastan Apify y Groq.'));
+    h('p', { class: 'hint' }, 'Todas son gratuitas. Se pegan una sola vez: quedan guardadas en este navegador y se envían únicamente a su proveedor. Para empezar bastan Apify y Groq.'));
+  const guardadas = Object.values(s.keys).filter(Boolean).length;
+  if (!storageOk()) claves.append(note('bad', 'Este navegador no está guardando datos, por eso las claves se pierden al cerrar. Suele pasar en ventanas de incógnito o privadas, o al abrir el enlace desde dentro de otra app (WhatsApp, Instagram). Abre la app en una ventana normal de Chrome, Safari o Edge.'));
+  else if (guardadas) claves.append(note('ok', `${guardadas} clave(s) guardada(s) en este navegador (${location.host}). No tienes que volver a pegarlas mientras uses este mismo navegador y esta misma dirección.`));
+  const keyFile = h('input', { type: 'file', accept: 'application/json', hidden: true });
+  keyFile.addEventListener('change', async () => {
+    const f = keyFile.files[0]; if (!f) return;
+    try {
+      const d = JSON.parse(await f.text());
+      if (d?.app !== 'radar-claves' || typeof d.keys !== 'object') throw new Error('no es un archivo de claves de esta app');
+      const cur = getSettings();
+      const keys = { ...cur.keys };
+      for (const k of Object.keys(cur.keys)) if (typeof d.keys[k] === 'string' && d.keys[k]) keys[k] = d.keys[k];
+      saveSettings({ keys, models: { ...cur.models, ...(d.models || {}) } });
+      app.log('Claves cargadas desde el archivo.', 'done');
+      await app.render();
+    } catch (e) { alert(`No se pudo leer el archivo: ${e.message}`); }
+  });
+  claves.append(h('div', { class: 'row' },
+    btn('Guardar mis claves en un archivo', () => {
+      const cur = getSettings();
+      if (!Object.values(cur.keys).some(Boolean)) { alert('Aún no hay claves guardadas.'); return; }
+      download('radar-mis-claves.json', JSON.stringify({ app: 'radar-claves', keys: cur.keys, models: cur.models }));
+    }, 'alt'),
+    btn('Cargar archivo de claves', () => keyFile.click(), 'alt'), keyFile),
+    h('p', { class: 'hint' }, 'El archivo sirve para no volver a pegarlas si cambias de navegador, de equipo o de dirección web: lo cargas y listo. Guárdalo en un lugar privado; quien lo tenga puede gastar tu crédito.'));
   for (const p of PROVEEDORES) {
     const inp = input({ type: 'password', value: s.keys[p.id], placeholder: `Pega aquí tu clave de ${p.nombre}`, 'aria-label': `Clave de ${p.nombre}` });
     const res = h('div', {});
-    const guardar = () => { const cur = getSettings(); saveSettings({ keys: { ...cur.keys, [p.id]: inp.value.trim() } }); };
-    inp.addEventListener('change', guardar);
+    const guardar = () => { const cur = getSettings(); saveSettings({ keys: { ...cur.keys, [p.id]: inp.value.trim() } }); pedirPersistencia(); };
+    inp.addEventListener('input', guardar); // se guarda al instante, sin esperar a salir del campo
     const probar = btn('Probar', async () => {
       guardar();
       if (!inp.value.trim()) { res.replaceChildren(note('warn', 'Pega primero la clave.')); return; }

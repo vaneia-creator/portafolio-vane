@@ -123,7 +123,15 @@ await page.route('https://www.googleapis.com/youtube/v3/**', (route) => {
   return json(route, { items: Array.from({ length: 20 }, (_, i) => ({ snippet: { videoId: vid, topLevelComment: { id: `${vid}_c${i}`, snippet: { videoId: vid, textOriginal: i % 4 === 3 ? 'Gran video, gracias' : `Yo publico todos los días y no consigo clientes, caso ${i}`, authorChannelId: { value: `UC${vid}${i}` }, publishedAt: new Date(NOW - 40 * DAY).toISOString() } } } })) });
 });
 
-for (const [n, v] of [['Apify', 'apify_test'], ['Groq', 'gsk_test'], ['YouTube Data API', 'yt_test']]) { await keyInput(n).fill(v); await keyInput(n).blur(); }
+for (const [n, v] of [['Apify', 'apify_test'], ['Groq', 'gsk_test'], ['YouTube Data API', 'yt_test']]) { await keyInput(n).fill(v); await page.waitForTimeout(150); }
+// Las claves persisten: se guardan al escribir y siguen ahí tras cerrar y volver a abrir la app.
+await page.reload(); await page.waitForSelector('#tabs button[aria-current="page"]:has-text("1 · Proyecto")');
+await tab('Configuración'); await page.waitForSelector('h2:has-text("Claves de acceso")');
+assert.equal(await keyInput('Apify').inputValue(), 'apify_test'); assert.equal(await keyInput('Groq').inputValue(), 'gsk_test');
+assert.match(await page.locator('section.card', { hasText: 'Claves de acceso' }).textContent(), /3 clave\(s\) guardada\(s\) en este navegador/);
+const page2 = await ctx.newPage(); await page2.goto('http://localhost:8765/radar/'); await page2.waitForSelector('#tabs button[aria-current="page"]:has-text("1 · Proyecto")');
+await page2.close();
+console.log('OK las claves persisten tras recargar y al abrir la app en otra pestaña (ya no arranca en Configuración)');
 
 await tab('1 · Proyecto');
 await page.fill('input[placeholder^="Ej.: conseguir clientes"]', 'Conseguir clientes para coaches de salud');
