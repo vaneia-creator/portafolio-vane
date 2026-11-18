@@ -69,6 +69,8 @@ const DB_NAME = 'radar-dolores-reels';
 const DATA_TABLES = ['projects', 'creators', 'reels', 'metric_snapshots', 'transcripts', 'annotations', 'comments', 'pain_mentions', 'pain_clusters', 'outputs', 'trends', 'runs'];
 const TABLES = [...DATA_TABLES, 'videos'];
 let dbPromise = null;
+// Aviso visible mientras otra pestaña con una versión anterior impide actualizar el almacenamiento.
+export const dbEventos = { onBloqueo: null, onDesbloqueo: null };
 
 function open() {
   dbPromise ||= new Promise((resolve, reject) => {
@@ -80,8 +82,16 @@ function open() {
         os.createIndex('project_id', 'project_id', { unique: false });
       }
     };
-    req.onblocked = () => reject(new Error('Cierra las demás pestañas de esta app y recarga: hay una actualización del almacenamiento pendiente.'));
-    req.onsuccess = () => resolve(req.result);
+    // No es un error: la actualización espera a que se cierren las pestañas con la versión anterior y sigue sola.
+    let bloqueado = false;
+    req.onblocked = () => { bloqueado = true; dbEventos.onBloqueo?.(); };
+    req.onsuccess = () => {
+      const d = req.result;
+      // Si en el futuro otra pestaña trae una versión más nueva, esta cede la conexión en vez de bloquearla.
+      d.onversionchange = () => { d.close(); dbPromise = null; dbEventos.onBloqueo?.('nueva'); };
+      if (bloqueado) dbEventos.onDesbloqueo?.();
+      resolve(d);
+    };
     req.onerror = () => reject(new Error('No se pudo abrir el almacenamiento local del navegador (IndexedDB).'));
   });
   return dbPromise;

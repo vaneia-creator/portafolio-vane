@@ -1,7 +1,7 @@
 // Arranque de la app: navegación, proyecto activo y registro de actividad.
 
 import { h, btn } from './ui/dom.js';
-import { db, getSettings, saveSettings, pedirPersistencia } from './services/store.js';
+import { db, getSettings, saveSettings, pedirPersistencia, dbEventos } from './services/store.js';
 import { viewConfig } from './ui/view-config.js';
 import { viewProject } from './ui/view-project.js';
 import { viewReels } from './ui/view-reels.js';
@@ -67,6 +67,17 @@ export const app = {
   go(tab) { app.tab = tab; location.hash = tab; return app.render(); },
 
   async render() {
+    try { await app.renderInner(); }
+    catch (err) {
+      console.error(err);
+      $('view').replaceChildren(h('section', { class: 'card' }, h('h2', {}, 'La app no pudo cargar tus datos'),
+        h('p', { class: 'note bad' }, err.message || String(err)),
+        h('p', { class: 'hint' }, 'Tus datos siguen guardados en este navegador. Cierra las otras pestañas de esta app y recarga la página. Si el problema sigue, avísame con este mensaje.'),
+        h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => location.reload() }, 'Recargar'))));
+    }
+  },
+
+  async renderInner() {
     const projects = (await db.all('projects')).sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
     const sel = $('projectSel');
     sel.replaceChildren(
@@ -113,6 +124,17 @@ window.addEventListener('hashchange', () => {
   const t = location.hash.slice(1);
   if (t && t !== app.tab && TABS.some((x) => x.id === t)) { app.tab = t; app.render(); }
 });
+
+dbEventos.onBloqueo = (tipo) => {
+  $('view').replaceChildren(h('section', { class: 'card' },
+    h('h2', {}, tipo === 'nueva' ? 'Hay una versión más nueva abierta' : 'Actualizando tu almacenamiento…'),
+    h('p', { class: 'note warn' }, tipo === 'nueva'
+      ? 'Abriste la app actualizada en otra pestaña. Recarga esta para usar la nueva versión.'
+      : 'La app tiene otra pestaña abierta con la versión anterior y eso impide actualizar. Cierra esa otra pestaña (o recárgala): esta seguirá sola en cuanto la cierres. Tus datos están a salvo.'),
+    h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => location.reload() }, 'Recargar'))));
+};
+dbEventos.onDesbloqueo = () => { app.log('Almacenamiento actualizado. Todos tus datos se conservan.', 'done'); };
+window.addEventListener('unhandledrejection', (e) => { console.error(e.reason); app.log(`Error: ${e.reason?.message || e.reason}`, 'err'); });
 
 (async function init() {
   pedirPersistencia(); // pide al navegador que no borre los datos de la app al liberar espacio
