@@ -98,6 +98,7 @@ export const app = {
     }
     const aviso = await avisoCopia(tab.id);
     view.replaceChildren(...(aviso ? [aviso] : []), ...nodes);
+    window.__radarListo = true;
   },
 };
 
@@ -126,6 +127,7 @@ window.addEventListener('hashchange', () => {
 });
 
 dbEventos.onBloqueo = (tipo) => {
+  window.__radarListo = true; // ya hay un mensaje claro en pantalla
   $('view').replaceChildren(h('section', { class: 'card' },
     h('h2', {}, tipo === 'nueva' ? 'Hay una versión más nueva abierta' : 'Actualizando tu almacenamiento…'),
     h('p', { class: 'note warn' }, tipo === 'nueva'

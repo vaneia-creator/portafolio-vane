@@ -11,7 +11,7 @@
 <body>
 <header class="top">
   <div class="brand">
-    <span class="eyebrow"><span class="dot"></span> Vane.IA</span>
+    <span class="eyebrow"><span class="dot"></span> Vane.IA · versión 7</span>
     <h1>Radar de Dolores y Reels</h1>
   </div>
   <div class="projectPick">
@@ -28,6 +28,61 @@
   <ol id="activityLog"></ol>
 </section>
 <noscript><p style="padding:2rem">Esta app necesita JavaScript.</p></noscript>
+<script>
+/* Vigilante de arranque: si la app no aparece en 10 s, explica por qué y permite rescatar los datos.
+   Es JavaScript clásico a propósito, para funcionar aunque falle todo lo demás. */
+(function () {
+  var VERSION = '7';
+  var errores = [];
+  window.__radarVersion = VERSION;
+  window.addEventListener('error', function (e) {
+    var t = e.target;
+    if (t && t !== window && t.tagName) errores.push('No se pudo cargar el archivo ' + (t.src || t.href || t.tagName));
+    else errores.push((e.message || 'Error') + (e.filename ? ' (' + e.filename.split('/').pop() + ', línea ' + e.lineno + ')' : ''));
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) { errores.push(String((e.reason && e.reason.message) || e.reason)); });
+  function el(tag, txt, attrs) { var n = document.createElement(tag); if (txt) n.textContent = txt; for (var k in (attrs || {})) n.setAttribute(k, attrs[k]); return n; }
+  function rescatar(boton) {
+    boton.textContent = 'Leyendo tus datos…';
+    var req = indexedDB.open('radar-dolores-reels');
+    req.onerror = function () { boton.textContent = 'No se pudieron leer los datos: ' + (req.error && req.error.message); };
+    req.onsuccess = function () {
+      var db = req.result, nombres = [].slice.call(db.objectStoreNames), salida = { app: 'radar-dolores-reels', version: 2, exportado: new Date().toISOString(), rescate: true, tablas: {} }, pendientes = nombres.length, videos = 0;
+      if (!pendientes) { boton.textContent = 'Este navegador no tiene datos de la app en esta dirección.'; return; }
+      nombres.forEach(function (n) {
+        var r = db.transaction(n).objectStore(n).getAll();
+        r.onsuccess = function () {
+          if (n === 'videos') videos = r.result.length; else salida.tablas[n] = r.result;
+          if (--pendientes === 0) {
+            var a = el('a', '', { download: 'radar-rescate-' + salida.exportado.slice(0, 10) + '.json' });
+            a.href = URL.createObjectURL(new Blob([JSON.stringify(salida)], { type: 'application/json' }));
+            document.body.appendChild(a); a.click(); a.remove();
+            var total = 0; for (var t in salida.tablas) total += salida.tablas[t].length;
+            boton.textContent = 'Descargado: ' + total + ' registros' + (videos ? ' (los ' + videos + ' videos siguen guardados en el navegador)' : '') + '.';
+          }
+        };
+      });
+    };
+  }
+  function mostrar() {
+    if (window.__radarListo) return;
+    var v = document.getElementById('view'); if (!v) return;
+    var c = el('section', '', { class: 'card' });
+    c.appendChild(el('h2', 'La app no terminó de cargar'));
+    c.appendChild(el('p', 'Tus datos siguen guardados en este navegador. Primero cierra las otras pestañas o ventanas de esta app y pulsa Recargar. Si sigue igual, copia este mensaje y envíaselo a quien te ayuda.', { class: 'hint' }));
+    var pre = el('pre', 'Versión de la app: ' + VERSION + '\nNavegador: ' + navigator.userAgent + '\nErrores: ' + (errores.length ? errores.join(' | ') : 'ninguno registrado (la carga sigue esperando)'), { style: 'white-space:pre-wrap;font-size:.8rem;background:var(--mint);padding:.7rem;border-radius:8px' });
+    c.appendChild(pre);
+    var fila = el('div', '', { class: 'row' });
+    var b1 = el('button', 'Recargar', { class: 'btn', type: 'button' }); b1.onclick = function () { location.reload(); };
+    var b2 = el('button', 'Rescatar mis datos (descargar copia)', { class: 'btn alt', type: 'button' }); b2.onclick = function () { rescatar(b2); };
+    fila.appendChild(b1); fila.appendChild(b2); c.appendChild(fila);
+    v.replaceChildren ? v.replaceChildren(c) : (v.innerHTML = '', v.appendChild(c));
+  }
+  setTimeout(mostrar, 10000);
+  window.__radarFallo = function (msg) { errores.push(msg); mostrar(); };
+})();
+</script>
+<script nomodule>document.getElementById('view').textContent = 'Este navegador es demasiado antiguo para la app. Ábrela con Chrome, Edge, Safari o Firefox actualizados.';</script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

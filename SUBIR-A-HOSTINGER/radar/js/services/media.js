@@ -151,7 +151,7 @@ export async function geminiVideo(blob, { system, user }, onLog) {
       return { json: parseJSON(texto), modelo: r?.modelVersion || modelo };
     } catch (e) {
       errores.push(`${modelo}: ${e.message}`);
-      if (modelos.at(-1) !== modelo) onLog?.(`Gemini ${modelo} falló (${e.message}); pruebo con ${modelos.at(-1)}.`);
+      if (modelos[modelos.length - 1] !== modelo) onLog?.(`Gemini ${modelo} falló (${e.message}); pruebo con ${modelos[modelos.length - 1]}.`);
     }
   }
   throw new ApiError('Gemini', 0, errores.join(' | '));

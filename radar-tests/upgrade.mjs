@@ -18,4 +18,16 @@ assert.equal(errs.length, 0, errs.join()); assert.match(await nueva.locator('#vi
 await vieja.close(); await nueva.waitForTimeout(2500);
 assert.equal(await nueva.locator('#tabs button').count(), 7); assert.ok((await nueva.locator('#projectSel option').allTextContents()).includes('Mi proyecto real'));
 console.log('OK actualización con la versión anterior abierta en otra pestaña: avisa, sigue sola al cerrarla y conserva los datos');
+
+// Si un archivo de la app no carga (o falla en ese navegador), nunca queda en blanco: explica y rescata los datos.
+const rota = await ctx.newPage();
+await rota.route('**/js/ui/view-library.js', (r) => r.fulfill({ status: 404, body: 'no' }));
+await rota.goto('http://localhost:8766/');
+await rota.waitForSelector('h2:has-text("La app no terminó de cargar")', { timeout: 15000 });
+const diag = await rota.locator('#view pre').textContent();
+assert.match(diag, /Versión de la app: 7/); assert.match(diag, /Navegador: /);
+const [d] = await Promise.all([rota.waitForEvent('download'), rota.click('button:has-text("Rescatar mis datos")')]);
+const rescate = JSON.parse(await (await import('node:fs/promises')).readFile(await d.path(), 'utf8'));
+assert.equal(rescate.tablas.projects[0].tema, 'Mi proyecto real');
+console.log('OK si la app falla al cargar: muestra versión, navegador y error, y el botón de rescate descarga los datos');
 await browser.close(); server.close();

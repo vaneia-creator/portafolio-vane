@@ -83,7 +83,7 @@ export async function llmJSON({ system, user, maxTokens = 4000 }, onLog) {
       return { json, proveedor: p.nombre, modelo: r.modelo, fecha: new Date().toISOString() };
     } catch (err) {
       errores.push(`${p.nombre}: ${err.message}`);
-      onLog?.(`${p.nombre} falló (${err.message}).${activos.at(-1) === p ? '' : ' Paso al proveedor de respaldo.'}`);
+      onLog?.(`${p.nombre} falló (${err.message}).${activos[activos.length - 1] === p ? '' : ' Paso al proveedor de respaldo.'}`);
     }
   }
   throw new ApiError('LLM', 0, `Ningún proveedor de LLM respondió. ${errores.join(' | ')}`);
