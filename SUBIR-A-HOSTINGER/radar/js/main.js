@@ -1,13 +1,15 @@
 // Arranque de la app: navegación, proyecto activo y registro de actividad.
 
-import { h } from './ui/dom.js';
-import { db, getSettings, saveSettings } from './services/store.js';
+import { h, btn } from './ui/dom.js';
+import { db, getSettings, saveSettings, pedirPersistencia } from './services/store.js';
 import { viewConfig } from './ui/view-config.js';
 import { viewProject } from './ui/view-project.js';
 import { viewReels } from './ui/view-reels.js';
 import { viewPains } from './ui/view-pains.js';
 import { viewGenerator } from './ui/view-generator.js';
 import { viewReport } from './ui/view-report.js';
+import { viewLibrary } from './ui/view-library.js';
+import { descargarCopia } from './ui/view-config.js';
 
 const TABS = [
   { id: 'proyecto', nombre: '1 · Proyecto', view: viewProject },
@@ -15,6 +17,7 @@ const TABS = [
   { id: 'dolores', nombre: '3 · Dolores', view: viewPains, needsProject: true },
   { id: 'generador', nombre: '4 · Ofertas y guiones', view: viewGenerator, needsProject: true },
   { id: 'informe', nombre: '5 · Informe', view: viewReport, needsProject: true },
+  { id: 'biblioteca', nombre: 'Biblioteca', view: viewLibrary },
   { id: 'config', nombre: 'Configuración', view: viewConfig },
 ];
 
@@ -82,9 +85,24 @@ export const app = {
       try { nodes = await tab.view(app); }
       catch (err) { console.error(err); nodes = [h('section', { class: 'card' }, h('h2', {}, 'Error al mostrar esta sección'), h('p', { class: 'note bad' }, err.message))]; }
     }
-    view.replaceChildren(...nodes);
+    const aviso = await avisoCopia(tab.id);
+    view.replaceChildren(...(aviso ? [aviso] : []), ...nodes);
   },
 };
+
+/** Recordatorio de copia: si hay material y no se ha descargado una copia en 7 días. */
+async function avisoCopia(tabId) {
+  if (tabId === 'config') return null;
+  const s = getSettings();
+  const dias = s.ultimoRespaldo ? (Date.now() - Date.parse(s.ultimoRespaldo)) / 86400000 : Infinity;
+  if (dias < 7) return null;
+  let n = 0;
+  try { n = await db.count('transcripts') + await db.count('outputs'); } catch { return null; }
+  if (!n) return null;
+  return h('div', { class: 'note warn noprint' },
+    `Tienes ${n} análisis y guiones guardados en este navegador. ${s.ultimoRespaldo ? 'Hace más de una semana que no descargas una copia.' : 'Aún no tienes ninguna copia fuera del navegador.'} `,
+    btn('Descargar copia completa', () => descargarCopia(app), 'small'));
+}
 
 $('projectSel').addEventListener('change', (e) => app.setProject(e.target.value));
 $('activityToggle').addEventListener('click', () => {
@@ -97,6 +115,7 @@ window.addEventListener('hashchange', () => {
 });
 
 (async function init() {
+  pedirPersistencia(); // pide al navegador que no borre los datos de la app al liberar espacio
   const s = getSettings();
   const inicial = location.hash.slice(1);
   if (TABS.some((t) => t.id === inicial)) app.tab = inicial;

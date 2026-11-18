@@ -155,7 +155,7 @@ export async function addReelsByUrl(project, texto, onLog) {
 }
 
 // ---------- M2: análisis a fondo (video, transcripción, visual y gatillos) ----------
-/** Apify descarga el video del reel; el navegador lo recibe en memoria y no lo guarda. */
+/** Apify descarga el video del reel y el navegador lo recibe (se guarda después si la opción está activa). */
 async function descargarVideo(project, reel, onLog) {
   const ig = reel.plataforma === 'instagram';
   const actor = ig ? ACTORS.igReels.id : ACTORS.ttVideos.id;
@@ -182,13 +182,24 @@ async function descargarVideo(project, reel, onLog) {
 
 /**
  * Análisis a fondo de un reel: video → transcripción con tiempos (Groq) → desglose visual toma a toma (Gemini)
- * → gatillos por segmento. Solo se guarda texto; el video se descarta al terminar.
+ * → gatillos por segmento. El video se guarda en este navegador (si la opción está activa) para no pagar dos veces.
  */
 export async function analizarReel(project, reel, { archivo, onLog } = {}) {
   let blob = archivo || null;
+  let yaGuardado = false;
+  if (!blob) {
+    const v = await db.get('videos', reel.id);
+    if (v?.blob) { blob = v.blob; yaGuardado = true; onLog('Uso el video ya guardado (sin coste de Apify).'); }
+  }
   if (!blob) {
     try { blob = await descargarVideo(project, reel, onLog); }
     catch (e) { onLog(`No se pudo descargar el video (${e.message}). Sigo solo con el audio.`); }
+  }
+  if (blob && !yaGuardado && getSettings().guardarVideos) {
+    try {
+      await db.put('videos', { id: reel.id, project_id: project.id, reel_id: reel.id, blob, size: blob.size, type: /^video\//.test(blob.type) ? blob.type : 'video/mp4', guardado: ahora() });
+      onLog('Video guardado en este navegador.');
+    } catch (e) { onLog(`No se pudo guardar el video (${e.message}); el análisis continúa.`); }
   }
   onLog('Transcribiendo el audio…');
   let t = null;
@@ -204,7 +215,7 @@ export async function analizarReel(project, reel, { archivo, onLog } = {}) {
     } catch (e) { visualError = e.message; }
   } else visualError = blob ? 'Falta la clave de Gemini (Configuración).' : 'No se pudo obtener el video.';
   if (visualError) onLog(`Análisis visual no disponible: ${visualError}`);
-  blob = null; // el video no se guarda
+  blob = null;
   const tr = {
     id: reel.id, project_id: project.id, reel_id: reel.id, creado: ahora(),
     idioma: t?.idioma ?? null, modelo: t?.modelo ?? null, via: t?.via ?? null,
@@ -435,7 +446,7 @@ export async function autoPains(project, onLog, { maxLeer = 240 } = {}) {
     const elegidos = R.reels.filter((r) => r.elegido);
     const top = R.rows.slice(0, 5).map((x) => R.reels.find((r) => r.id === x.reel_id));
     const reels = [...new Map([...elegidos, ...top].map((r) => [r.id, r])).values()].slice(0, 8);
-    const ya = new Set((await db.byProject('comments', project.id)).map((c) => c.origen));
+    const ya = new Set((await db.byProject('comments', project.id)).map((c) => c.origen || N.origenDe(c.url)));
     const faltan = reels.filter((r) => !ya.has(N.origenDe(r.url)));
     if (faltan.length) {
       const n = await collectReelComments(project, faltan, 20, onLog);

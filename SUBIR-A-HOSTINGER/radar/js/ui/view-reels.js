@@ -186,6 +186,8 @@ export async function viewReels(app) {
     const file = h('input', { type: 'file', accept: 'video/*', hidden: true });
     file.addEventListener('change', () => { const f = file.files[0]; if (f) app.run('Analizar archivo de video', (log) => analizarReel(p, r, { archivo: f, onLog: log })); });
     const src = embedUrl(r);
+    const vid = await db.get('videos', r.id);
+    const videoUrl = vid?.blob ? URL.createObjectURL(vid.blob) : null;
     const der = h('div', {},
       h('div', { class: 'kpis' },
         [['Vistas', fmt.n(r.views)], ['Likes', r.likes == null ? 'oculto' : fmt.n(r.likes)], ['Comentarios', fmt.n(r.comments)],
@@ -204,8 +206,14 @@ export async function viewReels(app) {
       h('h2', {}, `Reel de @${creDe.get(r.creator_id)?.handle || '—'}`, fila ? [' · ', etiquetaPill(fila.etiqueta)] : null),
       h('p', { class: 'hint' }, link(r.url), ` · publicado el ${fmt.fecha(r.posted_at)}`),
       h('div', { class: 'reelDetail' },
-        h('div', {}, src ? h('iframe', { class: 'embed', src, loading: 'lazy', title: 'Reel original', allow: 'encrypted-media', referrerpolicy: 'no-referrer' }) : null,
-          h('p', { class: 'hint' }, 'Publicación original incrustada desde la red; la app no aloja el video.')),
+        videoUrl
+          ? h('div', {}, h('video', { class: 'embed', src: videoUrl, controls: true, playsinline: true, preload: 'metadata', style: 'background:#000' }),
+            h('p', { class: 'hint' }, `Video guardado en este navegador el ${fmt.fecha(vid.guardado)} (${(vid.size / 1048576).toFixed(1)} MB).`),
+            h('div', { class: 'row noprint' },
+              h('a', { class: 'btn small alt', href: videoUrl, download: `${(creDe.get(r.creator_id)?.handle || 'reel')}-${r.shortcode || 'video'}.mp4` }, 'Descargar video'),
+              btn('Borrar video', async () => { if (confirm('¿Borrar el video guardado? El análisis se conserva.')) { await db.del('videos', r.id); await app.render(); } }, 'small danger')))
+          : h('div', {}, src ? h('iframe', { class: 'embed', src, loading: 'lazy', title: 'Reel original', allow: 'encrypted-media', referrerpolicy: 'no-referrer' }) : null,
+            h('p', { class: 'hint' }, 'Publicación original incrustada desde la red. El video se guarda aquí la primera vez que lo analizas.')),
         der)));
     if (mias.length) {
       const cont = h('div', { id: 'miVersion', style: 'display:grid;gap:1.2rem' });

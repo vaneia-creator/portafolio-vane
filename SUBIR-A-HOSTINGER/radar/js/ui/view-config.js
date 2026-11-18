@@ -2,7 +2,7 @@
 
 import { h, field, input, btn, note, fmt, download } from './dom.js';
 import { DEFAULT_THRESHOLDS, THRESHOLD_LABELS, DEFAULT_MODELS, DAILY_LIMITS, formulaVersion } from '../core/config.js';
-import { getSettings, saveSettings, getCounters, db, storageOk, pedirPersistencia } from '../services/store.js';
+import { getSettings, saveSettings, getCounters, db, storageOk, pedirPersistencia, exportZip, importBackup } from '../services/store.js';
 import { apifyAccount } from '../services/apify.js';
 import { testProveedor } from '../services/llm.js';
 import { ytTest } from '../services/media.js';
@@ -136,16 +136,56 @@ export async function viewConfig(app) {
   out.push(um);
 
   // --- Datos ---
-  const file = h('input', { type: 'file', accept: 'application/json', hidden: true });
+  out.push(await tarjetaDatos(app));
+  return out;
+}
+
+const MB = (b) => `${(b / 1048576).toLocaleString('es-ES', { maximumFractionDigits: 1 })} MB`;
+
+/** Descarga la copia completa (datos + videos) y anota la fecha. */
+export async function descargarCopia(app, soloDatos = false) {
+  await app.run(soloDatos ? 'Copia de los datos' : 'Copia completa', async (log) => {
+    const fecha = new Date().toISOString().slice(0, 10);
+    if (soloDatos) download(`radar-datos-${fecha}.json`, JSON.stringify(await db.exportAll()));
+    else {
+      const zip = await exportZip(log);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(zip); a.download = `radar-copia-completa-${fecha}.zip`;
+      document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      log(`Copia descargada (${MB(zip.size)}).`);
+    }
+    saveSettings({ ultimoRespaldo: new Date().toISOString() });
+  });
+}
+
+async function tarjetaDatos(app) {
+  const s = getSettings();
+  const [nP, nR, nT, nO, videos] = await Promise.all([db.count('projects'), db.count('reels'), db.count('transcripts'), db.count('outputs'), db.all('videos')]);
+  const pesoVideos = videos.reduce((a, v) => a + (v.size || 0), 0);
+  let estimado = null;
+  try { estimado = await navigator.storage?.estimate?.(); } catch { /* no disponible */ }
+  let persistente = null;
+  try { persistente = await navigator.storage?.persisted?.(); } catch { /* no disponible */ }
+  const file = h('input', { type: 'file', accept: '.zip,.json,application/zip,application/json', hidden: true });
   file.addEventListener('change', async () => {
     const f = file.files[0]; if (!f) return;
-    await app.run('Importar respaldo', async (log) => { const n = await db.importAll(JSON.parse(await f.text())); log(`${n} registros importados.`); });
+    await app.run('Importar copia', async (log) => { const r = await importBackup(f); log(`${r.registros} registros y ${r.videos} video(s) importados. No se borró nada de lo que ya tenías.`); });
   });
-  out.push(h('section', { class: 'card' }, h('h2', {}, 'Tus datos'),
-    h('p', { class: 'hint' }, 'Los proyectos se guardan en este navegador (no en un servidor). Si borras los datos del navegador o cambias de equipo, se pierden: descarga un respaldo con regularidad.'),
-    h('p', { class: 'hint' }, 'Nunca se guarda audio ni video: solo texto, métricas y enlaces. Los autores de los comentarios se guardan como un código anónimo.'),
+  const chk = h('input', { type: 'checkbox', checked: s.guardarVideos });
+  chk.addEventListener('change', () => saveSettings({ guardarVideos: chk.checked }));
+  return h('section', { class: 'card', id: 'tusDatos' }, h('h2', {}, 'Tus datos'),
+    h('p', { class: 'hint' }, 'Todo lo que traes y analizas se guarda solo, en este navegador: proyectos, cifras de cada reel (aunque solo hayas traído los datos), transcripciones, análisis toma a toma, gatillos, dolores, tus versiones y los videos. Actualizar la app desde la pestaña Deploys de Netlify no borra nada.'),
+    h('div', { class: 'kpis' },
+      [['Proyectos', nP], ['Reels guardados', nR], ['Reels analizados', nT], ['Guiones y ofertas', nO], ['Videos guardados', `${videos.length} · ${MB(pesoVideos)}`],
+        ['Espacio usado / disponible', estimado?.quota ? `${MB(estimado.usage || 0)} / ${MB(estimado.quota)}` : '—']]
+        .map(([k, v]) => h('div', { class: 'kpi' }, h('b', { style: 'font-size:1rem' }, typeof v === 'number' ? fmt.n(v) : v), h('span', {}, k)))),
+    h('label', { class: 'row', style: 'align-items:center;gap:.5rem' }, chk, h('span', {}, 'Guardar los videos que se analizan (así puedes volver a verlos y reanalizarlos sin pagar otra descarga).')),
+    persistente === false ? note('warn', 'El navegador todavía no ha marcado estos datos como permanentes: si el disco se llena, podría borrarlos. La app ya lo ha solicitado; tener una copia descargada te protege igualmente.') : null,
+    note(s.ultimoRespaldo ? '' : 'warn', s.ultimoRespaldo ? `Última copia descargada: ${fmt.fechaHora(s.ultimoRespaldo)}.` : 'Aún no has descargado ninguna copia. Los datos del navegador se pierden si los borras, si cambias de equipo o si abres la app desde otra dirección.'),
     h('div', { class: 'row' },
-      btn('Descargar respaldo (JSON)', async () => download(`radar-respaldo-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(await db.exportAll()))),
-      btn('Importar respaldo', () => file.click(), 'alt'), file)));
-  return out;
+      btn('Descargar copia completa (ZIP con videos)', () => descargarCopia(app)),
+      btn('Descargar solo los datos (JSON)', () => descargarCopia(app, true), 'alt'),
+      btn('Importar copia (ZIP o JSON)', () => file.click(), 'alt'), file),
+    h('p', { class: 'hint' }, 'Importar una copia la suma a lo que ya tienes, sin borrar nada. Sirve para pasar todo a otro navegador, a otro equipo o a otra dirección de la app. Los autores de los comentarios se guardan como un código anónimo.'));
 }

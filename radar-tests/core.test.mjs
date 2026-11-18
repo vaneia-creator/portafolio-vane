@@ -263,3 +263,14 @@ test('mi versión: una fila por toma, sin copiar y con límites de la red', () =
   assert.match(mal.problemas.map((p) => p.msg).join('\n'), /Falta la toma B2[\s\S]*copia una frase|copia una frase[\s\S]*Falta la toma B2/);
   assert.match(mal.problemas.map((p) => p.msg).join('\n'), /6 hashtags/);
 });
+
+test('copia ZIP: lo que se empaqueta se recupera byte a byte', async () => {
+  const { makeZip, readZip, crc32 } = await import('../SUBIR-A-HOSTINGER/radar/js/services/zip.js');
+  assert.equal(crc32(new TextEncoder().encode('123456789')), 0xcbf43926);
+  const video = new Uint8Array(200000).map((_, i) => (i * 31) % 256);
+  const zip = makeZip([{ name: 'datos.json', data: new TextEncoder().encode('{"a":"ñ"}') }, { name: 'videos/p1_ig_ABC.mp4', data: video }]);
+  const out = await readZip(await zip.arrayBuffer());
+  assert.deepEqual(out.map((e) => e.name), ['datos.json', 'videos/p1_ig_ABC.mp4']);
+  assert.equal(new TextDecoder().decode(out[0].data), '{"a":"ñ"}');
+  assert.deepEqual(out[1].data, video);
+});

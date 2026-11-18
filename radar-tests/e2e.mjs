@@ -33,8 +33,23 @@ const idle = () => page.waitForFunction(() => !document.body.classList.contains(
 const run = async (texto) => { await page.click(`button.btn:has-text("${texto}")`); await page.waitForTimeout(150); await idle(); };
 const lastLog = () => page.$$eval('#activityLog li', (l) => l.slice(-6).map((x) => x.textContent).join('\n'));
 
+// Datos de una versión anterior (base de datos v1) que la actualización debe conservar.
+await page.goto('http://localhost:8765/radar/no-existe');
+await page.evaluate(() => new Promise((res, rej) => {
+  const T = ['projects', 'creators', 'reels', 'metric_snapshots', 'transcripts', 'annotations', 'comments', 'pain_mentions', 'pain_clusters', 'outputs', 'trends', 'runs'];
+  const r = indexedDB.open('radar-dolores-reels', 1);
+  r.onupgradeneeded = () => { for (const t of T) r.result.createObjectStore(t, { keyPath: 'id' }).createIndex('project_id', 'project_id'); };
+  r.onsuccess = () => { const tx = r.result.transaction(['projects', 'reels', 'outputs'], 'readwrite');
+    tx.objectStore('projects').put({ id: 'p_viejo', tema: 'Proyecto antiguo', created_at: '2026-11-10T00:00:00Z' });
+    tx.objectStore('reels').put({ id: 'p_viejo:ig:OLD1', project_id: 'p_viejo', plataforma: 'instagram', url: 'https://www.instagram.com/reel/OLD1/', views: 777, caption: 'reel antiguo' });
+    tx.objectStore('outputs').put({ id: 'out_viejo', project_id: 'p_viejo', tipo: 'servicio', creado: '2026-11-11T00:00:00Z', generado_por: 'Groq', formula_version: 'v1', contenido_json: { cluster: 'Dolor antiguo', frase_oferta: 'Oferta guardada antes', citas: [], metricas: { autores: 15, intensidad: 4, pago: 0.2, pain_score: 0.7 }, entregables: [] } });
+    tx.oncomplete = () => { r.result.close(); res(); }; };
+  r.onerror = () => rej(r.error);
+}));
 await page.goto('http://localhost:8765/radar/');
 await page.waitForSelector('h2:has-text("Claves de acceso")');
+assert.ok((await page.locator('#projectSel option').allTextContents()).includes('Proyecto antiguo'), 'el proyecto de la versión anterior sigue ahí');
+console.log('OK actualización: los datos guardados con la versión anterior se conservan');
 console.log('OK arranca en Configuración cuando faltan claves');
 
 // ---------- Parte A: red real ----------
@@ -207,6 +222,14 @@ await page.locator('#reelDetail').screenshot({ path: `${SHOTS}/detalle.png` });
 await page.locator('#miVersion').screenshot({ path: `${SHOTS}/mi-version.png` });
 console.log('OK crear mi versión: video descargado → transcripción → Gemini toma a toma → guion espejo validado con actualización de herramienta');
 
+// El video queda guardado: se ve en la app y una segunda versión no paga otra descarga.
+assert.equal(await page.locator('#reelDetail video').count(), 1);
+await page.click('#reelDetail button:has-text("Volver a analizar")'); await page.waitForTimeout(200); await idle();
+await page.click('#reelDetail button:has-text("Crear otra versión")'); await page.waitForTimeout(200); await idle();
+assert.equal(videoDescargas, 1, 'no se vuelve a descargar el video'); assert.equal(await page.locator('#miVersion > section').count(), 2, 'las dos versiones quedan guardadas');
+assert.match(await page.$$eval('#activityLog li', (l) => l.map((x) => x.textContent).join('\n')), /Uso el video ya guardado \(sin coste de Apify\)/);
+console.log('OK el video se guarda: se reproduce en la app, se reutiliza sin pagar y las versiones se acumulan');
+
 // Opción 2: ranking de referentes
 await page.fill('section.card:has(h2:has-text("Opción 2")) input[type=number]', '36'); await page.keyboard.press('Tab'); await page.waitForTimeout(300);
 await run('Revisar 3 cuenta(s)');
@@ -246,6 +269,36 @@ for (const re of [/Reels más virales/, /Procedencia de los datos/, /reels insta
 await page.screenshot({ path: `${SHOTS}/informe.png`, fullPage: true });
 console.log('OK informe con procedencia');
 
+// Biblioteca: todo el material de todos los proyectos
+await tab('Biblioteca');
+await page.waitForSelector('h2:has-text("Guiones, versiones y ofertas")');
+const lib = await page.locator('main').textContent();
+assert.match(lib, /Con video guardado \(1\)/); assert.match(lib, /Oferta guardada antes|Oferta · servicio/); assert.match(lib, /Mi versión de un reel/);
+await page.locator('section.card:has(h2:has-text("Guiones, versiones y ofertas")) tr:has-text("Mi versión de un reel") button:has-text("Ver")').first().click();
+await page.waitForSelector('section.card:has(h2:has-text("Tu versión para"))');
+await page.screenshot({ path: `${SHOTS}/biblioteca.png`, fullPage: true });
+console.log('OK biblioteca con reels, análisis, videos, versiones y ofertas de todos los proyectos');
+
+// Copia completa: se descarga, se borra todo un proyecto y se restaura con su video.
+await tab('Configuración');
+await page.waitForSelector('#tusDatos');
+const [descarga] = await Promise.all([page.waitForEvent('download'), page.click('button:has-text("Descargar copia completa (ZIP con videos)")')]);
+const zipPath = `${SHOTS}/copia-test.zip`; await descarga.saveAs(zipPath);
+const { readZip } = await import('../SUBIR-A-HOSTINGER/radar/js/services/zip.js');
+const zb = (await import('node:fs')).readFileSync(zipPath);
+const entradas = await readZip(zb.buffer.slice(zb.byteOffset, zb.byteOffset + zb.length));
+assert.ok(entradas.some((e) => e.name === 'datos.json')); assert.equal(entradas.filter((e) => e.name.startsWith('videos/')).length, 1);
+const antes = await page.locator('#tusDatos .kpis').textContent();
+await tab('1 · Proyecto'); await page.click('button:has-text("Eliminar proyecto")'); await page.waitForTimeout(400);
+await tab('Configuración'); await page.waitForSelector('#tusDatos');
+assert.notEqual(await page.locator('#tusDatos .kpis').textContent(), antes);
+await page.setInputFiles('#tusDatos input[type=file]', zipPath); await page.waitForTimeout(300); await idle();
+assert.equal(await page.locator('#tusDatos .kpis').textContent(), antes, 'todo vuelve tal cual');
+assert.match(await lastLog(), /1 video\(s\) importados/);
+console.log('OK copia completa: ZIP con datos y video; tras borrar el proyecto, importarla lo restaura todo');
+
+await tab('2 · Reels virales');
+await page.selectOption('#projectSel', { label: 'Conseguir clientes para coaches de salud' }); await page.waitForTimeout(300);
 await page.setViewportSize({ width: 390, height: 800 });
 await tab('2 · Reels virales');
 await page.waitForSelector('h2:has-text("Opción 2")');
