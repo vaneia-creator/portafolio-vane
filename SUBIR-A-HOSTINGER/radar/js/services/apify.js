@@ -24,6 +24,13 @@ export async function apifyAccount() {
   };
 }
 
+/** Descarga en memoria un archivo guardado por un actor en Apify (por ejemplo, el video de un reel). */
+export async function fetchApifyRecord(url) {
+  const res = await fetch(url, { headers: auth() });
+  if (!res.ok) throw new ApiError('Apify', res.status, `Apify no entregó el video descargado (HTTP ${res.status}).`);
+  return res.blob();
+}
+
 /**
  * Ejecuta un actor, espera a que termine y devuelve sus resultados reales.
  * @param maxChargeUsd tope de gasto de la ejecución (Apify la detiene al alcanzarlo)

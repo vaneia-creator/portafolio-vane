@@ -2,14 +2,14 @@
 
 import { ACTORS, NETWORKS, formulaVersion } from './core/config.js';
 import * as N from './core/normalize.js';
-import { buildAnnotations, verifyPainItems, validateScript, hedges, normText } from './core/validate.js';
+import { buildAnnotations, verifyPainItems, validateScript, hedges, normText, buildVisual, validateEspejo, wordsInRange } from './core/validate.js';
 import { rankProject } from './core/virality.js';
 import { scoreClusters, topCitas, trendVerdict } from './core/pains.js';
 import * as P from './core/prompts.js';
 import { db, uid, getSettings } from './services/store.js';
-import { runActor } from './services/apify.js';
+import { runActor, fetchApifyRecord } from './services/apify.js';
 import { llmJSON } from './services/llm.js';
-import { transcribeReel, ytSearch, ytComments } from './services/media.js';
+import { transcribeReel, ytSearch, ytComments, geminiVideo } from './services/media.js';
 
 const ahora = () => new Date().toISOString();
 const creatorId = (projectId, plataforma, handle) => `${projectId}:${plataforma}:${handle}`;
@@ -25,8 +25,8 @@ async function registrar(projectId, tipo, run, detalle) {
 // ---------- M2: ingesta de métricas ----------
 export async function ingestMetrics(project, onLog) {
   const th = getSettings().thresholds;
-  const creators = await db.byProject('creators', project.id);
-  if (!creators.length) throw new Error('Añade al menos un referente antes de traer métricas.');
+  const creators = (await db.byProject('creators', project.id)).filter((c) => c.origen !== 'enlace');
+  if (!creators.length) throw new Error('Añade al menos un referente (pestaña Proyecto) antes de revisar sus cuentas.');
   // Cuántos reels por cuenta lo decide el usuario (pestaña Reels).
   const porPerfil = getSettings().captura.reelsPorCuenta;
   const capturado = ahora();
@@ -102,30 +102,178 @@ export async function ranking(project) {
   return { ...res, creators, reels, referencia: new Date(ref).toISOString(), formula_version: formulaVersion(th) };
 }
 
-// ---------- M2: transcripción y anotación ----------
-export async function transcribeAndAnnotate(project, reel, { archivo, onLog } = {}) {
-  let tr = await db.get('transcripts', reel.id);
-  if (!tr || archivo) {
-    onLog(`Transcribiendo ${reel.url}…`);
-    const t = await transcribeReel(reel, { archivo, onLog });
-    if (!t.words.length) {
-      tr = { id: reel.id, project_id: project.id, reel_id: reel.id, idioma: t.idioma, modelo: t.modelo, via: t.via, words: [], texto: '', creado: ahora(), sin_voz: true };
-      await db.put('transcripts', tr);
-      throw new Error('Dato insuficiente: la transcripción no contiene palabras (reel sin voz o solo con música).');
-    }
-    tr = { id: reel.id, project_id: project.id, reel_id: reel.id, idioma: t.idioma, modelo: t.modelo, via: t.via, words: t.words, texto: t.texto, creado: ahora() };
-    await db.put('transcripts', tr);
+// ---------- M2: reels elegidos por enlace ----------
+/** Trae las métricas reales de reels concretos que el usuario ya sabe que funcionaron. */
+export async function addReelsByUrl(project, texto, onLog) {
+  const partes = [...new Set(String(texto).split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
+  const ig = [], tt = [], malos = [];
+  for (const u of partes) { const r = N.parseReelUrl(u); if (!r) malos.push(u); else (r.plataforma === 'instagram' ? ig : tt).push(r.url); }
+  if (malos.length) onLog(`Ignorados porque no son enlaces de reel de Instagram ni de video de TikTok: ${malos.join(', ')}`);
+  if (!ig.length && !tt.length) throw new Error('No hay ningún enlace de reel válido.');
+  const capturado = ahora();
+  const reels = [];
+  if (ig.length) {
+    onLog(`Instagram: trayendo ${ig.length} reel(s)…`);
+    const r = await runActor(ACTORS.igReels.id, { username: [...new Set(ig)], resultsLimit: 1 },
+      { maxChargeUsd: costoEstimado('igReels', ig.length) + 0.05, onStatus: onLog });
+    await registrar(project.id, 'reels_por_enlace_instagram', r.run, `${r.items.length} resultados`);
+    reels.push(...r.items.map((i) => N.normIgReel(i, capturado)).filter(Boolean));
   }
-  if (!tr.words.length) throw new Error('Dato insuficiente: la transcripción no contiene palabras (reel sin voz o solo con música).');
-  onLog(`Anotando gatillos (${tr.words.length} palabras)…`);
-  const r = await llmJSON({ ...P.promptAnotador(project, reel, tr.words), maxTokens: 4000 }, onLog);
-  const { anotaciones, rechazados } = buildAnnotations(reel.id, tr.words, r.json?.segmentos);
-  if (!anotaciones.length) throw new Error(`El LLM (${r.proveedor}) no devolvió segmentos válidos. Vuelve a intentarlo.`);
-  const viejas = (await db.byProject('annotations', project.id)).filter((a) => a.reel_id === reel.id);
-  if (viejas.length) await db.del('annotations', viejas.map((a) => a.id));
-  await db.put('annotations', anotaciones.map((a) => ({ ...a, project_id: project.id, generado_por: `${r.proveedor} · ${r.modelo}`, generado: r.fecha })));
-  const cubiertas = anotaciones.reduce((n, a) => n + (a.w_fin - a.w_inicio + 1), 0);
-  return { anotaciones: anotaciones.length, rechazados: rechazados.length, cobertura: cubiertas / tr.words.length };
+  if (tt.length) {
+    onLog(`TikTok: trayendo ${tt.length} video(s)…`);
+    const r = await runActor(ACTORS.ttVideos.id, { postURLs: [...new Set(tt)], resultsPerPage: 1 },
+      { maxChargeUsd: costoEstimado('ttVideos', tt.length) + 0.05, onStatus: onLog });
+    await registrar(project.id, 'reels_por_enlace_tiktok', r.run, `${r.items.length} resultados`);
+    reels.push(...r.items.map((i) => N.normTtVideo(i, capturado)).filter(Boolean));
+  }
+  const igSinSeguidores = [];
+  for (const r of reels) {
+    if (!r.handle) continue;
+    const cid = creatorId(project.id, r.plataforma, r.handle);
+    let c = await db.get('creators', cid);
+    if (!c) {
+      c = { id: cid, project_id: project.id, plataforma: r.plataforma, handle: r.handle, followers: r.followers ?? null, origen: 'enlace', captured_at: r.followers != null ? capturado : null,
+        url: r.plataforma === 'instagram' ? `https://www.instagram.com/${r.handle}/` : `https://www.tiktok.com/@${r.handle}` };
+      await db.put('creators', c);
+    }
+    if (r.plataforma === 'instagram' && c.followers == null) igSinSeguidores.push(c);
+    const { followers, handle, ...resto } = r;
+    await db.put('reels', { ...resto, id: `${project.id}:${r.id}`, project_id: project.id, creator_id: cid, elegido: true });
+    await db.put('metric_snapshots', { id: `${project.id}:${r.id}@${capturado}`, project_id: project.id, reel_id: `${project.id}:${r.id}`, captured_at: capturado, views: r.views, likes: r.likes, comments: r.comments });
+  }
+  const handles = [...new Set(igSinSeguidores.map((c) => c.handle))];
+  if (handles.length) {
+    onLog(`Instagram: trayendo seguidores de ${handles.length} cuenta(s)…`);
+    try {
+      const perf = await runActor(ACTORS.igProfiles.id, { usernames: handles }, { maxChargeUsd: costoEstimado('igProfiles', handles.length) + 0.05, onStatus: onLog });
+      await registrar(project.id, 'perfiles_instagram', perf.run, `${perf.items.length} perfiles`);
+      const perfiles = perf.items.map((i) => N.normIgProfile(i, capturado)).filter(Boolean);
+      for (const c of igSinSeguidores) { const p = perfiles.find((x) => x.handle === c.handle); if (p) await db.put('creators', { ...c, followers: p.followers, captured_at: capturado }); }
+    } catch (e) { onLog(`No se pudieron traer los seguidores: ${e.message}`); }
+  }
+  return reels.length;
+}
+
+// ---------- M2: análisis a fondo (video, transcripción, visual y gatillos) ----------
+/** Apify descarga el video del reel; el navegador lo recibe en memoria y no lo guarda. */
+async function descargarVideo(project, reel, onLog) {
+  const ig = reel.plataforma === 'instagram';
+  const actor = ig ? ACTORS.igReels.id : ACTORS.ttVideos.id;
+  const input = ig ? { username: [reel.url], resultsLimit: 1, includeDownloadedVideo: true } : { postURLs: [reel.url], resultsPerPage: 1, shouldDownloadVideos: true };
+  onLog(`Apify: descargando el video de ${reel.url}…`);
+  const r = await runActor(actor, input, { maxChargeUsd: 0.6, onStatus: onLog });
+  await registrar(project.id, 'descarga_video', r.run, reel.url);
+  const item = r.items.find((x) => x && !x.error);
+  if (!item) throw new Error('Apify no devolvió este reel (puede haberse borrado o ser privado).');
+  // De paso se actualizan las métricas con la captura recién hecha.
+  const fresco = ig ? N.normIgReel(item, ahora()) : N.normTtVideo(item, ahora());
+  if (fresco) {
+    const { followers, handle, id, ...m } = fresco;
+    await db.put('reels', { ...reel, ...m, id: reel.id });
+    await db.put('metric_snapshots', { id: `${reel.id}@${fresco.captured_at}`, project_id: project.id, reel_id: reel.id, captured_at: fresco.captured_at, views: fresco.views, likes: fresco.likes, comments: fresco.comments });
+    Object.assign(reel, m);
+  }
+  const url = N.findApifyRecordUrl(item);
+  if (!url) throw new Error('Apify no incluyó el video descargado en la respuesta.');
+  const blob = await fetchApifyRecord(url);
+  onLog(`Video recibido en memoria (${(blob.size / 1048576).toFixed(1)} MB${r.run.costoUsd != null ? `; costo de Apify: $${r.run.costoUsd.toFixed(3)}` : ''}).`);
+  return blob;
+}
+
+/**
+ * Análisis a fondo de un reel: video → transcripción con tiempos (Groq) → desglose visual toma a toma (Gemini)
+ * → gatillos por segmento. Solo se guarda texto; el video se descarta al terminar.
+ */
+export async function analizarReel(project, reel, { archivo, onLog } = {}) {
+  let blob = archivo || null;
+  if (!blob) {
+    try { blob = await descargarVideo(project, reel, onLog); }
+    catch (e) { onLog(`No se pudo descargar el video (${e.message}). Sigo solo con el audio.`); }
+  }
+  onLog('Transcribiendo el audio…');
+  let t = null;
+  try { t = await transcribeReel(reel, { archivo: blob ? new File([blob], 'reel.mp4', { type: blob.type || 'video/mp4' }) : undefined, onLog }); }
+  catch (e) { if (!blob) throw e; onLog(`Transcripción: ${e.message}`); }
+  let visual = null, visualError = null;
+  if (blob && getSettings().keys.gemini) {
+    onLog('Gemini está mirando el video toma por toma…');
+    try {
+      const g = await geminiVideo(blob, P.promptVisual(reel, t?.texto || ''), onLog);
+      visual = { ...buildVisual(g.json, reel.duration_s ?? t?.duracion_s), modelo: g.modelo, creado: ahora() };
+      if (!visual.tomas.length) { visualError = 'Gemini no devolvió tomas válidas.'; visual = null; }
+    } catch (e) { visualError = e.message; }
+  } else visualError = blob ? 'Falta la clave de Gemini (Configuración).' : 'No se pudo obtener el video.';
+  if (visualError) onLog(`Análisis visual no disponible: ${visualError}`);
+  blob = null; // el video no se guarda
+  const tr = {
+    id: reel.id, project_id: project.id, reel_id: reel.id, creado: ahora(),
+    idioma: t?.idioma ?? null, modelo: t?.modelo ?? null, via: t?.via ?? null,
+    words: t?.words || [], texto: t?.texto || '', sin_voz: !!t && !t.words.length,
+    visual, visual_error: visual ? null : visualError,
+  };
+  await db.put('transcripts', tr);
+  let anotaciones = 0;
+  if (tr.words.length) {
+    onLog(`Anotando gatillos (${tr.words.length} palabras)…`);
+    const r = await llmJSON({ ...P.promptAnotador(project, reel, tr.words), maxTokens: 4000 }, onLog);
+    const res = buildAnnotations(reel.id, tr.words, r.json?.segmentos);
+    const viejas = (await db.byProject('annotations', project.id)).filter((a) => a.reel_id === reel.id);
+    if (viejas.length) await db.del('annotations', viejas.map((a) => a.id));
+    await db.put('annotations', res.anotaciones.map((a) => ({ ...a, project_id: project.id, generado_por: `${r.proveedor} · ${r.modelo}`, generado: r.fecha })));
+    anotaciones = res.anotaciones.length;
+  }
+  if (!tr.words.length && !visual) throw new Error('Dato insuficiente: no se obtuvo ni la voz ni el video de este reel. Sube el archivo de video con "Subir archivo".');
+  return { anotaciones, tomas: visual?.tomas.length || 0, palabras: tr.words.length };
+}
+export const transcribeAndAnnotate = analizarReel;
+
+/** Tomas del original con lo que se dice en cada una (de la transcripción) y sus funciones. */
+function tomasDe(tr, anot) {
+  let tomas = tr.visual?.tomas;
+  if (!tomas?.length) {
+    tomas = anot.sort((a, b) => a.start_ms - b.start_ms).map((a, i) => ({ id: `B${i + 1}`, t_inicio_s: Math.round(a.start_ms / 100) / 10, t_fin_s: Math.round(a.end_ms / 100) / 10, plano: '', que_se_ve: '', texto_en_pantalla: '', edicion: '', voz: a.texto_exacto }));
+  }
+  return tomas.map((t) => {
+    const dice = tr.words?.length ? wordsInRange(tr.words, t.t_inicio_s, t.t_fin_s) : t.voz;
+    const funciones = [...new Set(anot.filter((a) => a.start_ms / 1000 < t.t_fin_s && a.end_ms / 1000 > t.t_inicio_s && a.funcion !== 'sin_gatillo').map((a) => a.funcion))].join(', ');
+    return { ...t, dice, funciones };
+  });
+}
+
+/** "Crear mi versión": analiza el reel si hace falta y escribe el guion espejo adaptado al servicio del usuario. */
+export async function crearMiVersion(project, reel, redKey, onLog) {
+  if (!project.nicho_usuario) throw new Error('Escribe tu servicio (lo que vendes) en la pestaña Proyecto: sin eso no se puede adaptar el reel.');
+  let tr = await db.get('transcripts', reel.id);
+  if (!tr || (!tr.visual && getSettings().keys.gemini && !tr.visual_error)) {
+    await analizarReel(project, reel, { onLog });
+    tr = await db.get('transcripts', reel.id);
+  }
+  const anot = (await db.byProject('annotations', project.id)).filter((a) => a.reel_id === reel.id);
+  const tomas = tomasDe(tr, anot);
+  if (!tomas.length) throw new Error('Dato insuficiente: este reel no tiene tomas ni segmentos analizados.');
+  const red = NETWORKS[redKey];
+  const [menciones, clusters] = await Promise.all([db.byProject('pain_mentions', project.id), db.byProject('pain_clusters', project.id)]);
+  const citas = menciones.filter((m) => m.cluster_id).sort((a, b) => b.intensidad - a.intensidad || (a.id < b.id ? -1 : 1)).slice(0, 6).map((m) => m.cita_corta);
+  onLog(`Escribiendo tu versión para ${red.nombre} (${tomas.length} tomas)…`);
+  const r = await llmJSON({ ...P.promptEspejo(project, red, reel, tomas, tr.visual, anot, citas), maxTokens: 4500 }, onLog);
+  const fuentes = [tr.texto, reel.caption, ...tomas.map((t) => t.texto_en_pantalla), ...tomas.map((t) => t.voz)];
+  const v = validateEspejo(r.json, tomas, red, fuentes);
+  const act = (Array.isArray(r.json?.actualizaciones) ? r.json.actualizaciones : [])
+    .map((a) => ({ original: String(a?.original || '').trim(), actual: String(a?.actual || '').trim(), motivo: String(a?.motivo || '').trim() })).filter((a) => a.original && a.actual);
+  const out = {
+    id: uid('out'), project_id: project.id, tipo: 'espejo', red: redKey, reel_id: reel.id, creado: r.fecha,
+    generado_por: `${r.proveedor} · ${r.modelo}`, formula_version: formulaVersion(getSettings().thresholds),
+    contenido_json: {
+      reel_url: reel.url, reel_views: reel.views, con_visual: !!tr.visual, visual_modelo: tr.visual?.modelo || null,
+      formato: tr.visual?.formato || '', subtitulos: tr.visual?.subtitulos || '', musica: tr.visual?.musica || '', cortes_por_10s: tr.visual?.cortes_por_10s ?? null,
+      filas: v.filas, caption: v.caption, actualizaciones: act,
+      lista_de_grabacion: (Array.isArray(r.json?.lista_de_grabacion) ? r.json.lista_de_grabacion : []).map(String).filter(Boolean).slice(0, 20),
+      que_ensena: String(r.json?.que_ensena || '').trim(), citas_usadas: citas.length, clusters: clusters.length,
+      validacion: { ok: v.ok, problemas: v.problemas, duracion_s: v.duracion_s, hashtags: v.hashtags, caption_chars: v.caption.length },
+    },
+  };
+  await db.put('outputs', out);
+  return out;
 }
 
 // ---------- M1: recolección de comentarios ----------
@@ -195,8 +343,13 @@ export async function addManual(project, texto, url, fecha) {
 // ---------- M1: extracción y agrupación ----------
 const LOTE = 12; // cabe en el límite gratuito de Groq (8.000 tokens por minuto, sumando entrada y salida)
 
-export async function extractPains(project, onLog, debeParar = () => false) {
-  const pendientes = (await db.byProject('comments', project.id)).filter((c) => !c.procesado && c.texto);
+// Señales de que un comentario expresa un problema: se leen primero para no gastar cupo de IA en saludos y elogios.
+const SENAL_DOLOR = /\b(no (puedo|s[eé]|consigo|logro|me sale|me funciona|entiendo|tengo)|problema|ayuda|dif[ií]cil|frustr|llevo|intent[eé]|necesito|c[oó]mo (hago|puedo|se)|por qu[eé]|pagu[eé]|pagar[ií]a|caro|precio|cuesta|odio|miedo|no funciona|error|nadie|nunca|cansad|harta|harto|perd[ií])/i;
+const prioridad = (c) => (SENAL_DOLOR.test(c.texto) ? 2 : 0) + Math.min(c.texto.length / 200, 1);
+
+export async function extractPains(project, onLog, debeParar = () => false, { max = Infinity } = {}) {
+  const pendientes = (await db.byProject('comments', project.id)).filter((c) => !c.procesado && c.texto)
+    .sort((a, b) => prioridad(b) - prioridad(a) || (a.id < b.id ? -1 : 1)).slice(0, max);
   let menciones = 0, rechazados = 0, procesados = 0;
   for (let i = 0; i < pendientes.length; i += LOTE) {
     if (debeParar()) break;
@@ -209,7 +362,8 @@ export async function extractPains(project, onLog, debeParar = () => false) {
     await db.put('comments', lote.map((c) => ({ ...c, procesado: true, texto: '' })));
     menciones += v.menciones.length; rechazados += v.rechazados.length; procesados += lote.length;
   }
-  return { procesados, menciones, rechazados, restantes: pendientes.length - procesados };
+  const quedan = (await db.byProject('comments', project.id)).filter((c) => !c.procesado && c.texto).length;
+  return { procesados, menciones, rechazados, restantes: quedan };
 }
 
 export async function clusterPains(project, onLog) {
@@ -254,6 +408,48 @@ export async function painBoard(project) {
   const trend = trendVerdict(trends?.puntos, th.trendsMinRatio);
   const scored = scoreClusters(menciones, clusters, th, Date.now(), trend);
   return { clusters: scored, menciones, trend, trends, formula_version: formulaVersion(th) };
+}
+
+/**
+ * Búsqueda automática de dolores: genera las búsquedas, recoge comentarios de YouTube y de los reels analizados,
+ * lee los más prometedores con IA y los agrupa. Cada paso se salta (y lo dice) si falta su clave.
+ */
+export async function autoPains(project, onLog, { maxLeer = 240 } = {}) {
+  const s = getSettings();
+  let fuentes = 0;
+  if (s.keys.youtube) {
+    let consultas = project.consultas?.length ? project.consultas : null;
+    if (!consultas) {
+      onLog('Pensando qué buscaría tu audiencia en YouTube…');
+      consultas = await generarConsultas(project, onLog);
+      project.consultas = consultas;
+      await db.put('projects', project);
+      onLog(`Búsquedas: ${consultas.join(' · ')}`);
+    }
+    const r = await collectYoutube(project, consultas.slice(0, 10), { videosPorConsulta: 3, paginas: 1 }, onLog);
+    onLog(`YouTube: ${r.total} comentarios nuevos de ${r.videos} videos.`);
+    fuentes++;
+  } else onLog('Sin clave de YouTube: se omite YouTube (añádela en Configuración).');
+  if (s.keys.apify) {
+    const R = await ranking(project);
+    const elegidos = R.reels.filter((r) => r.elegido);
+    const top = R.rows.slice(0, 5).map((x) => R.reels.find((r) => r.id === x.reel_id));
+    const reels = [...new Map([...elegidos, ...top].map((r) => [r.id, r])).values()].slice(0, 8);
+    const ya = new Set((await db.byProject('comments', project.id)).map((c) => c.origen));
+    const faltan = reels.filter((r) => !ya.has(N.origenDe(r.url)));
+    if (faltan.length) {
+      const n = await collectReelComments(project, faltan, 20, onLog);
+      onLog(`Reels analizados: ${n} comentarios nuevos.`);
+      fuentes++;
+    } else if (reels.length) fuentes++;
+    else onLog('Aún no hay reels elegidos ni ranking: se omiten sus comentarios.');
+  }
+  if (!fuentes) throw new Error('No hay de dónde sacar comentarios: añade la clave de YouTube o elige reels en la pestaña Reels.');
+  const e = await extractPains(project, onLog, undefined, { max: maxLeer });
+  onLog(`${e.procesados} comentarios leídos → ${e.menciones} dolores con cita literal.${e.restantes ? ` Quedan ${e.restantes} por leer (botón "Leer más comentarios").` : ''}`);
+  const total = (await db.byProject('pain_mentions', project.id)).length;
+  if (total) { const c = await clusterPains(project, onLog); onLog(`${c.clusters} grupos de dolores.`); }
+  return e;
 }
 
 // ---------- M3: generador ----------

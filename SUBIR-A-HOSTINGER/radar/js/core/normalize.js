@@ -83,6 +83,51 @@ export function normTtVideo(item, capturedAt) {
   };
 }
 
+/** Reconoce un enlace de reel de Instagram o de video de TikTok. Devuelve null si no lo es. */
+export function parseReelUrl(raw) {
+  let u;
+  try { u = new URL(String(raw).trim()); } catch { return null; }
+  const host = u.hostname.toLowerCase().replace(/^(www|m)\./, '');
+  if (host === 'instagram.com') {
+    const m = u.pathname.match(/^\/(?:[^/]+\/)?(?:reel|reels|p|tv)\/([A-Za-z0-9_-]+)/);
+    return m ? { plataforma: 'instagram', url: `https://www.instagram.com/reel/${m[1]}/`, code: m[1] } : null;
+  }
+  if (host === 'vm.tiktok.com' || host === 'vt.tiktok.com') return { plataforma: 'tiktok', url: u.href, code: null };
+  if (host === 'tiktok.com') {
+    const m = u.pathname.match(/^\/@([^/]+)\/video\/(\d+)/);
+    return m ? { plataforma: 'tiktok', url: `https://www.tiktok.com/@${m[1]}/video/${m[2]}`, code: m[2] } : null;
+  }
+  return null;
+}
+
+const APIFY_RECORD = /^https:\/\/api\.apify\.com\/v2\/key-value-stores\/[^/]+\/records\/[^?#\s]+/;
+/** Busca en un resultado de Apify la URL del video descargado en su almacén (key-value store). */
+export function findApifyRecordUrl(obj, depth = 0) {
+  if (obj == null || depth > 5) return null;
+  if (typeof obj === 'string') return APIFY_RECORD.test(obj) ? obj : null;
+  if (Array.isArray(obj)) { for (const x of obj) { const r = findApifyRecordUrl(x, depth + 1); if (r) return r; } return null; }
+  if (typeof obj === 'object') {
+    for (const k of ['downloadedVideo', 'mediaUrls', 'videoMeta']) { const r = findApifyRecordUrl(obj[k], depth + 1); if (r) return r; }
+    for (const [k, v] of Object.entries(obj)) {
+      if (/cover|avatar|music|image|slideshow/i.test(k)) continue;
+      const r = findApifyRecordUrl(v, depth + 1); if (r) return r;
+    }
+  }
+  return null;
+}
+
+/** Identifica el video o publicación de origen de un comentario (para contar orígenes distintos). */
+export function origenDe(url) {
+  const s = String(url || '');
+  const yt = s.match(/[?&]v=([\w-]+)/);
+  if (/youtube\.com|youtu\.be/.test(s) && yt) return `yt:${yt[1]}`;
+  const ig = s.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
+  if (ig) return `ig:${ig[1]}`;
+  const tt = s.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
+  if (tt) return `tt:${tt[1]}`;
+  return s.split(/[?#]/)[0].replace(/\/+$/, '') || 'desconocido';
+}
+
 export function normIgComment(item) {
   const texto = str(item?.text);
   if (!item || item.error || !texto || !str(item.id)) return null;
@@ -130,7 +175,7 @@ export async function sha256Hex(texto) {
 export async function anonymize(c, projectId) {
   const autor_hash = (await sha256Hex(`${c.fuente}:${c.autor}`)).slice(0, 16);
   const id = c.id || `man:${(await sha256Hex(c.texto)).slice(0, 20)}`;
-  return { id: `${projectId}:${id}`, project_id: projectId, fuente: c.fuente, url: c.url, autor_hash, fecha: c.fecha, texto: c.texto.slice(0, 1500), procesado: false };
+  return { id: `${projectId}:${id}`, project_id: projectId, fuente: c.fuente, url: c.url, origen: origenDe(c.url), autor_hash, fecha: c.fecha, texto: c.texto.slice(0, 1500), procesado: false };
 }
 
 export function embedUrl(reel) {

@@ -4,7 +4,7 @@
 import { fetchJSON, ApiError } from './http.js';
 import { getSettings, bump, overLimit } from './store.js';
 
-function parseJSON(texto) {
+export function parseJSON(texto) {
   let t = String(texto || '').trim();
   t = t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   try { return JSON.parse(t); } catch { /* intenta recortar */ }
@@ -100,7 +100,7 @@ export async function testProveedor(id) {
   if (id === 'gemini') {
     const r = await fetchJSON(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(s.keys.gemini)}`, {}, { proveedor: 'Gemini', reintentos: 0 });
     const ids = (r?.models || []).filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace(/^models\//, ''));
-    return { ids, faltan: ids.includes(s.models.gemini) ? [] : [s.models.gemini] };
+    return { ids, faltan: [s.models.gemini, s.models.geminiVideo].filter((m) => m && !ids.includes(m)) };
   }
   if (id === 'openrouter') {
     const k = await fetchJSON('https://openrouter.ai/api/v1/key', { headers: { Authorization: `Bearer ${s.keys.openrouter}` } }, { proveedor: 'OpenRouter', reintentos: 0 });

@@ -10,9 +10,9 @@ export async function viewProject(app) {
   const p = app.project;
 
   // --- Crear / editar ---
-  const tema = input({ value: p?.tema || '', placeholder: 'Ej.: conseguir clientes para coaches de salud' });
-  const nicho = input({ value: p?.nicho_usuario || '', placeholder: 'Ej.: marketing con IA para coaches' });
-  const aud = input({ value: p?.audiencia || '', placeholder: 'Ej.: coaches de salud que venden por Instagram' });
+  const tema = input({ value: p?.tema || '', placeholder: 'Ej.: automatizar ventas con IA' });
+  const nicho = input({ value: p?.nicho_usuario || '', placeholder: 'Ej.: creo bots de WhatsApp con IA para negocios' });
+  const aud = input({ value: p?.audiencia || '', placeholder: 'Ej.: dueños de pequeños negocios que venden por WhatsApp' });
   const red = h('select', {}, Object.entries(NETWORKS).map(([k, v]) => h('option', { value: k, selected: (p?.red_objetivo || 'instagram') === k }, v.nombre)));
   const guardar = async (nuevo) => {
     if (!tema.value.trim()) { alert('Escribe el tema del proyecto.'); return; }
@@ -22,9 +22,10 @@ export async function viewProject(app) {
   };
   out.push(h('section', { class: 'card' },
     h('h2', {}, p ? 'Proyecto activo' : 'Crea tu primer proyecto'),
-    h('p', { class: 'hint' }, 'El tema y la audiencia se usan para buscar dolores y para que el análisis hable de tu nicho, no en genérico.'),
+    h('p', { class: 'hint' }, 'Con esto la app adapta cada reel que copies a lo que tú vendes y busca sola los dolores de tu audiencia.'),
     h('div', { class: 'grid2' },
-      field('Tema a investigar', tema), field('Tu nicho', nicho), field('Audiencia', aud), field('Red objetivo', red)),
+      field('Tema', tema, 'De qué hablas en tus reels.'), field('Tu servicio (lo que vendes)', nicho, 'Cada reel copiado se adapta a esto.'),
+      field('A quién se lo vendes', aud, 'Se usa para el tono y para buscar sus dolores.'), field('Red donde publicas', red)),
     h('div', { class: 'row' },
       p ? btn('Guardar cambios', () => guardar(false)) : null,
       btn(p ? 'Crear como proyecto nuevo' : 'Crear proyecto', () => guardar(true), p ? 'alt' : ''),
@@ -35,7 +36,7 @@ export async function viewProject(app) {
   if (!p) return out;
 
   // --- Referentes ---
-  const creators = (await db.byProject('creators', p.id)).sort((a, b) => (a.handle < b.handle ? -1 : 1));
+  const creators = (await db.byProject('creators', p.id)).filter((c) => c.origen !== 'enlace').sort((a, b) => (a.handle < b.handle ? -1 : 1));
   const plat = h('select', { 'aria-label': 'Plataforma' }, h('option', { value: 'instagram' }, 'Instagram'), h('option', { value: 'tiktok' }, 'TikTok'));
   const handle = input({ placeholder: '@usuario o enlace del perfil', 'aria-label': 'Usuario del referente' });
   const err = h('div', {});
@@ -46,7 +47,7 @@ export async function viewProject(app) {
   handle.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
   const ref = h('section', { class: 'card' },
     h('h2', {}, 'Referentes'),
-    h('p', { class: 'hint' }, 'Empieza con 3 cuentas que conozcas bien: así contrastas la fórmula de viralidad con tu intuición. Solo se leen datos públicos, sin iniciar sesión con ninguna cuenta.'),
+    h('p', { class: 'hint' }, 'Opcional. Cuentas de tu nicho cuyos reels funcionan: la app encuentra cuáles destacan para que los copies. Si ya tienes los enlaces de los reels, pégalos directamente en la pestaña Reels. Solo se leen datos públicos, sin iniciar sesión.'),
     h('div', { class: 'row' }, h('div', { class: 'field', style: 'flex:0 1 150px' }, plat), h('div', { class: 'field' }, handle), btn('Añadir referente', add)),
     err);
   if (creators.length) {
@@ -59,7 +60,7 @@ export async function viewProject(app) {
       { h: 'Estado', wrap: true, v: (c) => (c.error ? h('span', { class: 'pill bad' }, c.error) : c.privado ? h('span', { class: 'pill bad' }, 'perfil privado') : '') },
       { h: '', v: (c) => btn('Quitar', async () => { if (confirm(`¿Quitar @${c.handle} y sus reels?`)) { await removeCreator(p, c); await app.render(); } }, 'small danger') },
     ], creators),
-    h('div', { class: 'row' }, btn('Traer métricas de los reels →', () => app.go('reels'))));
+    h('div', { class: 'row' }, btn('Encontrar sus virales →', () => app.go('reels'))));
   } else ref.append(empty('Aún no hay referentes.'));
   out.push(ref);
 

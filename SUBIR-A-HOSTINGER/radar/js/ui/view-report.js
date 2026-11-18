@@ -3,7 +3,7 @@
 import { h, btn, note, fmt, table, link, etiquetaPill, download } from './dom.js';
 import { db, getSettings } from '../services/store.js';
 import * as PL from '../pipeline.js';
-import { renderAnotaciones } from './view-reels.js';
+import { renderAnotaciones, renderVisual } from './view-reels.js';
 import { criterioPills, citasNodes } from './view-pains.js';
 import { renderOutput } from './view-generator.js';
 import { NETWORKS } from '../core/config.js';
@@ -46,9 +46,10 @@ export async function viewReport(app) {
       ], top));
     for (const x of top) {
       const an = anot.filter((a) => a.reel_id === x.reel_id);
-      if (!an.length) continue;
+      const tv = trans.find((t) => t.reel_id === x.reel_id)?.visual;
+      if (!an.length && !tv) continue;
       const r = reelDe.get(x.reel_id);
-      sec.append(h('h3', {}, `#${top.indexOf(x) + 1} · @${creDe.get(r.creator_id)?.handle} · `, link(r.url, 'ver reel')), ...renderAnotaciones(an));
+      sec.append(h('h3', {}, `#${top.indexOf(x) + 1} · @${creDe.get(r.creator_id)?.handle} · `, link(r.url, 'ver reel')), tv ? renderVisual(tv) : null, ...renderAnotaciones(an));
     }
     const sin = top.filter((x) => !anot.some((a) => a.reel_id === x.reel_id)).length;
     if (sin) sec.append(note('warn', `${sin} reel(s) del top aún no están analizados.`));

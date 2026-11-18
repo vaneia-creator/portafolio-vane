@@ -10,7 +10,7 @@ const FUENTES = { youtube: 'YouTube', instagram: 'Instagram', tiktok: 'TikTok', 
 export function criterioPills(c, th) {
   const pill = (ok, txt) => h('span', { class: `pill ${ok === true ? 'ok' : ok === false ? 'bad' : 'warn'}` }, `${ok === true ? '✓' : ok === false ? '✗' : '?'} ${txt}`);
   return h('div', { class: 'criteria' },
-    pill(c.criterios.frecuencia, `${c.autores} autores en ${c.fuentes.length} fuente(s) (mín. ${th.painMinAuthors} y ${th.painMinSources})`),
+    pill(c.criterios.frecuencia, `${c.autores} personas en ${c.n_origenes} videos o publicaciones (mín. ${th.painMinAuthors} y ${th.painMinSources})`),
     pill(c.criterios.intensidad, `intensidad ${fmt.d(c.intensidad)} (mín. ${fmt.d(th.painMinIntensity, 1)})`),
     pill(c.criterios.pago, `señal de pago ${fmt.pct(c.pago)} (mín. ${fmt.pct(th.painMinPay)})`),
     pill(c.criterios.recencia, c.recencia == null ? 'recencia: sin fechas' : `recientes ${fmt.pct(c.recencia)} (mín. ${fmt.pct(th.painMinRecency)})`),
@@ -32,6 +32,7 @@ export async function viewPains(app) {
   const comments = await db.byProject('comments', p.id);
   const pendientes = comments.filter((c) => !c.procesado).length;
   const B = await PL.painBoard(p);
+  const avanz = [];
 
   // --- 1. Consultas ---
   const ta = h('textarea', { placeholder: 'Una consulta por línea. Ej.: no consigo clientes por instagram' }, st.consultas);
@@ -43,8 +44,8 @@ export async function viewPains(app) {
   const vid = input({ type: 'number', min: '1', max: '20', value: st.videos });
   vid.addEventListener('input', () => { st.videos = Math.min(20, Math.max(1, Number(vid.value) || 5)); pintar(); });
   pintar();
-  out.push(h('section', { class: 'card' },
-    h('h2', {}, '1 · Dónde buscar'),
+  avanz.push(h('section', { class: 'card' },
+    h('h2', {}, 'Búsquedas de YouTube'),
     h('p', { class: 'hint' }, 'Consultas que tu audiencia escribiría en YouTube cuando tiene el problema. Genera una lista con IA y edítala: tú validas qué se busca.'),
     h('div', { class: 'row' }, h('div', { class: 'field' }, ta)),
     h('div', { class: 'row' },
@@ -75,10 +76,10 @@ export async function viewPains(app) {
     await app.render();
   });
   const igN = virales.filter((r) => r.plataforma === 'instagram').length, ttN = virales.length - igN;
-  out.push(h('section', { class: 'card' },
-    h('h2', {}, '2 · Más fuentes'),
+  avanz.push(h('section', { class: 'card' },
+    h('h2', {}, 'Más fuentes'),
     h('p', { class: 'hint' }, `Un dolor solo se valida si aparece en al menos ${th.painMinSources} fuentes distintas, así que conviene combinar YouTube con otra.`),
-    h('h3', {}, 'Comentarios de tus reels virales'),
+    h('h3', {}, 'Comentarios de los reels que estás analizando (de otras cuentas)'),
     virales.length
       ? h('div', {},
         h('p', { class: 'hint' }, `Hasta ${st.porReel} comentarios de cada uno de los ${virales.length} reels del top. Costo máximo estimado en Apify: ${fmt.usd((igN ? PL.costoEstimado('igComments', igN * st.porReel) : 0) + (ttN ? PL.costoEstimado('ttComments', ttN * st.porReel) : 0))}.`),
@@ -107,8 +108,8 @@ export async function viewPains(app) {
   // --- 3. Extraer y agrupar ---
   const porFuente = Object.keys(FUENTES).map((f) => [FUENTES[f], comments.filter((c) => c.fuente === f).length]).filter(([, n]) => n);
   const sinGrupo = B.menciones.filter((m) => !m.cluster_id).length;
-  out.push(h('section', { class: 'card' },
-    h('h2', {}, '3 · Extraer y agrupar'),
+  avanz.push(h('section', { class: 'card' },
+    h('h2', {}, 'Pasos sueltos'),
     h('p', { class: 'hint' }, 'La IA lee cada comentario y propone el dolor; la app solo acepta los que citan literalmente el comentario. Al terminar, el texto completo se borra y queda la cita corta (privacidad).'),
     h('div', { class: 'kpis' },
       h('div', { class: 'kpi' }, h('b', {}, fmt.n(comments.length)), h('span', {}, 'comentarios recogidos')),
@@ -126,14 +127,37 @@ export async function viewPains(app) {
         app.run('Agrupación de dolores', async (log) => { const r = await PL.clusterPains(p, log); log(`${r.clusters} grupos${r.sinGrupo ? `; ${r.sinGrupo} dolores quedaron sin grupo` : ''}.`); });
       }, 'alt'))));
 
+  // --- Búsqueda automática ---
+  const nCom = comments.length;
+  out.push(h('section', { class: 'card' },
+    h('h2', {}, 'Dolores de tu audiencia'),
+    h('p', { class: 'hint' }, `Un clic y la app hace todo: piensa qué buscaría tu audiencia en YouTube a partir de tu tema y tu servicio, recoge los comentarios de esos videos y de los reels que estás analizando, lee los que expresan un problema y los agrupa. Solo acepta dolores con cita literal del comentario.`),
+    !s.keys.youtube ? note('warn', 'Falta la clave de YouTube (Configuración): sin ella solo se usan los comentarios de los reels.') : null,
+    h('div', { class: 'kpis' },
+      h('div', { class: 'kpi' }, h('b', {}, fmt.n(nCom)), h('span', {}, 'comentarios recogidos')),
+      h('div', { class: 'kpi' }, h('b', {}, fmt.n(pendientes)), h('span', {}, 'sin leer')),
+      h('div', { class: 'kpi' }, h('b', {}, fmt.n(B.menciones.length)), h('span', {}, 'dolores con cita')),
+      h('div', { class: 'kpi' }, h('b', {}, fmt.n(B.clusters.filter((c) => c.valida).length)), h('span', {}, 'dolores validados'))),
+    h('div', { class: 'row' },
+      btn(nCom ? 'Buscar más dolores' : 'Buscar dolores automáticamente', () => {
+        if (!s.keys.groq && !s.keys.gemini) { alert('Falta la clave de Groq (Configuración).'); return; }
+        app.run('Búsqueda de dolores', (log) => PL.autoPains(p, log));
+      }),
+      pendientes ? btn(`Leer más comentarios (${fmt.n(pendientes)} sin leer)`, () => app.run('Leer comentarios', async (log) => {
+        const r = await PL.extractPains(p, log, undefined, { max: 240 });
+        log(`${r.procesados} leídos → ${r.menciones} dolores con cita.`);
+        await PL.clusterPains(p, log);
+      }), 'alt') : null),
+    h('p', { class: 'hint' }, 'Cada búsqueda lee hasta 240 comentarios (los que más parecen expresar un problema) para no agotar el cupo diario gratuito de la IA. Cuesta unos centavos de Apify si hay reels analizados (20 comentarios por reel).')));
+
   // --- 4. Tablero ---
   const board = h('section', { class: 'card' },
-    h('h2', {}, '4 · Dolores validados'),
+    h('h2', {}, 'Dolores validados'),
     h('p', { class: 'hint' }, `Fórmula ${B.formula_version}. Pain Score = 0,3·frecuencia + 0,25·intensidad + 0,3·pago + 0,15·recencia. Solo los grupos que pasan todos los umbrales se convierten en oferta.`));
   if (!B.clusters.length) board.append(empty('Aún no hay grupos. Recoge comentarios, extrae y agrupa.'));
   else {
     const validos = B.clusters.filter((c) => c.valida).length;
-    board.append(note(validos ? 'ok' : 'warn', validos ? `${validos} dolor(es) pasan todos los umbrales.` : 'Dato insuficiente: ningún grupo pasa todavía todos los umbrales. Recoge más comentarios o añade otra fuente.'));
+    board.append(note(validos ? 'ok' : 'warn', validos ? `${validos} dolor(es) pasan todos los umbrales.` : 'Ningún grupo pasa todavía todos los umbrales: abajo ves qué le falta a cada uno (✗). Pulsa "Buscar más dolores" para reunir más comentarios.'));
     for (const c of B.clusters) {
       board.append(h('details', { open: c.valida || c.formato === 'guion' },
         h('summary', {}, `${c.nombre} · Pain Score ${fmt.d(c.pain_score)} · `,
@@ -145,5 +169,6 @@ export async function viewPains(app) {
     if (validos || B.clusters.some((c) => c.formato === 'guion')) board.append(h('div', { class: 'row' }, btn('Crear ofertas y guiones →', () => app.go('generador'))));
   }
   out.push(board);
+  out.push(h('details', { class: 'card' }, h('summary', {}, 'Opciones avanzadas (búsquedas, textos pegados a mano, Google Trends, pasos sueltos)'), ...avanz));
   return out;
 }

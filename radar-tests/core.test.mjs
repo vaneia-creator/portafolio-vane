@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS as TH, formulaVersion, NETWORKS } from '../SUBIR-A-HOSTINGER/radar/js/core/config.js';
 import { rankCreator, rankProject, median, label, engagement } from '../SUBIR-A-HOSTINGER/radar/js/core/virality.js';
-import { buildAnnotations, verifyPainItems, validateScript, isLiteral, sharesRun, hedges } from '../SUBIR-A-HOSTINGER/radar/js/core/validate.js';
+import { buildAnnotations, verifyPainItems, validateScript, isLiteral, sharesRun, hedges, buildVisual, validateEspejo, wordsInRange } from '../SUBIR-A-HOSTINGER/radar/js/core/validate.js';
 import { parseTrendsCSV, trendVerdict, scoreClusters, topCitas } from '../SUBIR-A-HOSTINGER/radar/js/core/pains.js';
 import * as N from '../SUBIR-A-HOSTINGER/radar/js/core/normalize.js';
 
@@ -17,12 +17,16 @@ test('mediana', () => {
   assert.equal(median([]), null);
 });
 
-test('excluye reels de menos de 7 días y exige 12 elegibles', () => {
+test('con minAgeDays=7 excluye los recientes; por defecto (0) los incluye; exige 12 elegibles', () => {
+  const TH7 = { ...TH, minAgeDays: 7 };
   const reels = Array.from({ length: 12 }, (_, i) => reel(i, 1000 + i, 8 + i)).concat([reel(99, 999999, 2)]);
-  const r = rankCreator(reels, 5000, {}, TH, NOW);
+  const r = rankCreator(reels, 5000, {}, TH7, NOW);
   assert.equal(r.estado, 'ok');
   assert.equal(r.rows.length, 12);
   assert.ok(r.excluidos.some((e) => e.id === 'r99' && /menos de 7/.test(e.motivo)));
+  const todos = rankCreator(reels, 5000, {}, TH, NOW);
+  assert.equal(todos.rows.length, 13);
+  assert.equal(todos.rows.find((x) => x.reel_id === 'r99').etiqueta, 'Mega-viral', 'un reel de 2 días que explota entra en el ranking');
   const pocos = rankCreator(reels.slice(0, 11), 5000, {}, TH, NOW);
   assert.equal(pocos.estado, 'muestra_insuficiente');
   assert.equal(pocos.rows.length, 0);
@@ -82,9 +86,9 @@ test('velocidad solo con capturas entre el día 1 y el 7', () => {
 });
 
 test('versión de fórmula cambia al calibrar umbrales', () => {
-  assert.equal(formulaVersion({ ...TH }), 'v1');
+  assert.equal(formulaVersion({ ...TH }), 'v2');
   const v = formulaVersion({ ...TH, viralOS: 4 });
-  assert.match(v, /^v1-[0-9a-f]{8}$/);
+  assert.match(v, /^v2-[0-9a-f]{8}$/);
   assert.equal(v, formulaVersion({ ...TH, viralOS: 4 }));
 });
 
@@ -145,14 +149,14 @@ test('literalidad y copia', () => {
   assert.deepEqual(hedges('Esto funciona'), []);
 });
 
-function mencion(i, cl, o = {}) { return { id: `m${i}`, cluster_id: cl, autor_hash: `a${i}`, fuente: i % 2 ? 'youtube' : 'instagram', intensidad: 4, senal_pago: i % 5 === 0, fecha: '2026-06-01T00:00:00Z', tipo_necesidad: 'aprender', cita_corta: `cita ${i}`, ...o }; }
+function mencion(i, cl, o = {}) { return { id: `m${i}`, cluster_id: cl, autor_hash: `a${i}`, fuente: i % 2 ? 'youtube' : 'instagram', url: `https://www.youtube.com/watch?v=v${i % 4}&lc=c${i}`, intensidad: 4, senal_pago: i % 5 === 0, fecha: '2026-06-01T00:00:00Z', tipo_necesidad: 'aprender', cita_corta: `cita ${i}`, ...o }; }
 
 test('clusters: umbrales, Pain Score y formato', () => {
   const ms = [];
   for (let i = 0; i < 20; i++) ms.push(mencion(i, 'A'));
   for (let i = 20; i < 30; i++) ms.push(mencion(i, 'B'));
   for (let i = 30; i < 46; i++) ms.push(mencion(i, 'C', { senal_pago: false, intensidad: 5 }));
-  for (let i = 46; i < 62; i++) ms.push(mencion(i, 'D', { fuente: 'youtube' }));
+  for (let i = 46; i < 62; i++) ms.push(mencion(i, 'D', { url: `https://www.youtube.com/watch?v=solo&lc=c${i}` }));
   for (let i = 62; i < 80; i++) ms.push(mencion(i, 'E', { fecha: '2023-01-01T00:00:00Z' }));
   const cls = ['A', 'B', 'C', 'D', 'E'].map((id) => ({ id, nombre: id }));
   const sc = scoreClusters(ms, cls, TH, NOW, { estado: 'dato_insuficiente' });
@@ -162,7 +166,7 @@ test('clusters: umbrales, Pain Score y formato', () => {
   assert.ok(Math.abs(g.A.pain_score - (0.3 * 1 + 0.25 * 0.8 + 0.3 * 0.2 + 0.15 * 1)) < 1e-12);
   assert.equal(g.B.valida, false, 'menos de 15 autores');
   assert.equal(g.C.valida, false); assert.equal(g.C.formato, 'guion', 'intensidad alta sin señal de pago → guion');
-  assert.equal(g.D.valida, false, 'una sola fuente');
+  assert.equal(g.D.valida, false, 'un solo video de origen'); assert.equal(g.D.n_origenes, 1); assert.equal(g.A.n_origenes, 4);
   assert.equal(g.E.valida, false, 'menciones antiguas');
   const baja = scoreClusters(ms, cls, TH, NOW, { estado: 'decreciente' });
   assert.equal(baja.find((c) => c.id === 'A').valida, false, 'tendencia decreciente invalida');
@@ -211,4 +215,51 @@ test('normalización de Apify y YouTube: lo que no viene queda en null', async (
   const a = await N.anonymize({ ...y }, 'p1');
   assert.match(a.autor_hash, /^[0-9a-f]{16}$/); assert.ok(!JSON.stringify(a).includes('UC1'));
   assert.equal(N.parseManualPaste('Primera queja larga de verdad\nSegunda queja larga de verdad\n\ncorto', 'https://foro', '2026-01-01').length, 2);
+});
+
+test('enlaces de reels, video descargado en Apify y origen de comentarios', () => {
+  assert.deepEqual(N.parseReelUrl('https://www.instagram.com/reel/DAbc_12-x/?igsh=xyz'), { plataforma: 'instagram', url: 'https://www.instagram.com/reel/DAbc_12-x/', code: 'DAbc_12-x' });
+  assert.equal(N.parseReelUrl('https://instagram.com/vane.ia_/reel/XYZ123/').code, 'XYZ123');
+  assert.equal(N.parseReelUrl('https://www.instagram.com/p/POST1/').url, 'https://www.instagram.com/reel/POST1/');
+  assert.equal(N.parseReelUrl('https://www.tiktok.com/@ana/video/7312345678901234567?lang=es').url, 'https://www.tiktok.com/@ana/video/7312345678901234567');
+  assert.equal(N.parseReelUrl('https://vm.tiktok.com/ZMabc/').plataforma, 'tiktok');
+  assert.equal(N.parseReelUrl('https://www.instagram.com/vane.ia_/'), null);
+  assert.equal(N.parseReelUrl('hola'), null);
+  const kv = 'https://api.apify.com/v2/key-value-stores/abc/records/video-XYZ';
+  assert.equal(N.findApifyRecordUrl({ downloadedVideo: kv, videoUrl: 'https://cdn/x.mp4' }), kv);
+  assert.equal(N.findApifyRecordUrl({ mediaUrls: [kv + '.mp4'], covers: ['https://api.apify.com/v2/key-value-stores/abc/records/cover'] }), kv + '.mp4');
+  assert.equal(N.findApifyRecordUrl({ videoUrl: 'https://cdn/x.mp4' }), null);
+  assert.equal(N.origenDe('https://www.youtube.com/watch?v=abcdef1&lc=Ug1'), 'yt:abcdef1');
+  assert.equal(N.origenDe('https://www.instagram.com/p/ABC/'), N.origenDe('https://www.instagram.com/reel/ABC/?x=1'));
+});
+
+test('desglose visual: tomas ordenadas, sin solapes, dentro de la duración y ritmo calculado', () => {
+  const v = buildVisual({ global: { formato: 'a cámara', herramientas_mencionadas: [{ nombre: 'ChatGPT', para_que: 'textos' }, { para_que: 'sin nombre' }] }, tomas: [
+    { t_inicio_s: 2, t_fin_s: 5, plano: 'pantalla', texto_en_pantalla: ' PASO 1 ' },
+    { t_inicio_s: 0, t_fin_s: 2.04, plano: 'primer plano' },
+    { t_inicio_s: 4.9, t_fin_s: 9, plano: 'b-roll' },
+    { t_inicio_s: 'x', t_fin_s: 3 },
+    { t_inicio_s: 50, t_fin_s: 60 },
+  ] }, 10);
+  assert.deepEqual(v.tomas.map((t) => [t.id, t.t_inicio_s, t.t_fin_s, t.plano]), [['B1', 0, 2, 'primer plano'], ['B2', 2, 5, 'pantalla'], ['B3', 5, 9, 'b-roll']]);
+  assert.equal(v.tomas[1].texto_en_pantalla, 'PASO 1');
+  assert.equal(v.descartadas, 2);
+  assert.equal(v.cortes_por_10s, 3.3);
+  assert.deepEqual(v.herramientas, [{ nombre: 'ChatGPT', para_que: 'textos' }]);
+  assert.equal(wordsInRange([{ word: 'Hola', start: 0.1 }, { word: 'mundo', start: 1.95 }, { word: 'fin', start: 2.5 }], 0, 2), 'Hola mundo');
+});
+
+test('mi versión: una fila por toma, sin copiar y con límites de la red', () => {
+  const tomas = [{ id: 'B1', t_inicio_s: 0, t_fin_s: 2, texto_en_pantalla: 'El error que todos cometen' }, { id: 'B2', t_inicio_s: 2, t_fin_s: 30 }];
+  const ok = validateEspejo({ filas: [
+    { toma: 'b1', texto_hablado: 'Tu bot de WhatsApp pierde ventas', funcion: 'DOL', que_grabas: 'primer plano' },
+    { toma: 'B2', texto_hablado: 'Escríbeme BOT y te lo monto', funcion: 'CTA' },
+    { toma: 'B9', texto_hablado: 'sobra' },
+  ], caption: 'Bots que venden #ia' }, tomas, NETWORKS.instagram, ['El error que todos cometen al vender por WhatsApp']);
+  assert.equal(ok.ok, true); assert.equal(ok.filas.length, 2); assert.equal(ok.filas[0].original, tomas[0]); assert.equal(ok.duracion_s, 30);
+  assert.match(ok.problemas.map((p) => p.msg).join(), /1 fila\(s\) extra/);
+  const mal = validateEspejo({ filas: [{ toma: 'B1', texto_hablado: 'mira el error que todos cometen al vender por WhatsApp hoy', funcion: 'NEG' }], caption: '#a #b #c #d #e #f' }, tomas, NETWORKS.instagram, ['El error que todos cometen al vender por WhatsApp']);
+  assert.equal(mal.ok, false);
+  assert.match(mal.problemas.map((p) => p.msg).join('\n'), /Falta la toma B2[\s\S]*copia una frase|copia una frase[\s\S]*Falta la toma B2/);
+  assert.match(mal.problemas.map((p) => p.msg).join('\n'), /6 hashtags/);
 });

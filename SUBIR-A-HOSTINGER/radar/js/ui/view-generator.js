@@ -1,13 +1,52 @@
 // M3: ofertas y guiones por red, a partir de dolores validados y patrones de reels analizados.
 
-import { h, btn, note, fmt, table, link, empty, fnChip } from './dom.js';
+import { h, btn, note, fmt, table, link, empty, fnChip, download } from './dom.js';
 import { db } from '../services/store.js';
 import * as PL from '../pipeline.js';
 import { NETWORKS } from '../core/config.js';
 
 const TIPOS = { servicio: 'Servicio', infoproducto: 'Infoproducto', guion: 'Guion' };
 
+function renderEspejo(o, borrar) {
+  const c = o.contenido_json;
+  const v = c.validacion;
+  const red = NETWORKS[o.red];
+  const texto = () => [
+    `MI VERSIÓN para ${red.nombre} — basada en ${c.reel_url}`, c.que_ensena ? `Qué enseña: ${c.que_ensena}` : '', '',
+    ...c.filas.map((f) => [`${f.toma} (${f.t_inicio_s}–${f.t_fin_s} s)`, `  Grabas: ${f.que_grabas}`, `  Edición: ${f.edicion}`, `  Dices: ${f.texto_hablado}`, `  Texto en pantalla: ${f.texto_pantalla}`].join('\n')),
+    '', `Caption: ${c.caption}`,
+    c.lista_de_grabacion.length ? `\nQué grabar o preparar:\n${c.lista_de_grabacion.map((x) => `- ${x}`).join('\n')}` : '',
+  ].filter((x) => x !== null).join('\n');
+  return h('section', { class: 'card' },
+    h('h2', {}, `Tu versión para ${red.nombre}`),
+    h('p', { class: 'hint' }, 'Basada en ', link(c.reel_url, 'este reel'), `${c.reel_views != null ? ` (${fmt.n(c.reel_views)} vistas)` : ''} · escrita por ${o.generado_por} el ${fmt.fechaHora(o.creado)}${c.con_visual ? ` · visual observado por ${c.visual_modelo}` : ''}`),
+    !c.con_visual ? note('warn', 'Este reel se analizó sin video: los planos y la edición son una propuesta, no una copia del original.') : null,
+    note(v.ok ? 'ok' : 'bad', v.ok ? `Misma estructura que el original: ${c.filas.length} tomas, ${v.duracion_s} s, sin frases copiadas, caption de ${v.caption_chars} caracteres y ${v.hashtags} hashtag(s).` : 'Revisa estos puntos (o pulsa "Crear otra versión"):',
+      v.problemas.length ? h('ul', {}, v.problemas.map((x) => h('li', {}, `${x.nivel === 'error' ? 'Error' : 'Aviso'}: ${x.msg}`))) : null),
+    c.que_ensena ? h('p', { style: 'margin-top:.6rem' }, h('b', {}, 'Qué enseña tu versión: '), c.que_ensena) : null,
+    c.formato || c.subtitulos ? h('p', { class: 'hint' }, `Formato a copiar: ${c.formato || '—'} · Subtítulos: ${c.subtitulos || 'no hay'} · Música: ${c.musica || 'no hay'}${c.cortes_por_10s != null ? ` · Ritmo: ${fmt.d(c.cortes_por_10s, 1)} cortes cada 10 s` : ''}`) : null,
+    table([
+      { h: 'Toma', v: (f) => h('span', {}, h('b', {}, f.toma), h('br'), h('span', { class: 'mono' }, `${f.t_inicio_s}–${f.t_fin_s} s`), h('br'), f.funcion ? fnChip(f.funcion) : '') },
+      { h: 'En el original', wrap: true, v: (f) => h('span', { class: 'muted' }, [f.original.plano, f.original.que_se_ve].filter(Boolean).join(': ') || '—', f.original.texto_en_pantalla ? [h('br'), `Texto: «${f.original.texto_en_pantalla}»`] : null, f.original.edicion ? [h('br'), `Edición: ${f.original.edicion}`] : null) },
+      { h: 'Qué grabas tú', wrap: true, v: (f) => h('span', {}, f.que_grabas || '—', f.edicion ? [h('br'), h('b', {}, 'Edición: '), f.edicion] : null) },
+      { h: 'Qué dices', wrap: true, v: (f) => f.texto_hablado || '—' },
+      { h: 'Texto en pantalla', wrap: true, v: (f) => (f.texto_pantalla ? `«${f.texto_pantalla}»` : '—') },
+      { h: 'Qué cambió', wrap: true, v: (f) => h('span', { class: 'muted' }, f.que_cambia || '—') },
+    ], c.filas),
+    h('h3', { class: 'sub3' }, 'Caption'), h('p', { style: 'white-space:pre-wrap' }, c.caption || '—'),
+    c.actualizaciones.length ? h('div', {}, h('h3', { class: 'sub3' }, 'Herramientas o datos actualizados'),
+      note('warn', 'Cambios propuestos por la IA según lo que conoce. Comprueba que sigan vigentes antes de grabar.',
+        h('ul', {}, c.actualizaciones.map((a) => h('li', {}, `${a.original} → ${a.actual}${a.motivo ? ` (${a.motivo})` : ''}`))))) : null,
+    c.lista_de_grabacion.length ? h('div', {}, h('h3', { class: 'sub3' }, 'Qué grabar o preparar'), h('ul', {}, c.lista_de_grabacion.map((x) => h('li', {}, x)))) : null,
+    h('div', { class: 'row noprint' },
+      btn('Copiar guion', async () => { try { await navigator.clipboard.writeText(texto()); alert('Guion copiado.'); } catch { download('mi-version.txt', texto(), 'text/plain'); } }, 'small alt'),
+      btn('Descargar (.txt)', () => download('mi-version.txt', texto(), 'text/plain'), 'small alt'),
+      onDeleteBtn(borrar)));
+}
+const onDeleteBtn = (fn) => (fn ? btn('Eliminar', fn, 'small danger') : null);
+
 export function renderOutput(o, onDelete) {
+  if (o.tipo === 'espejo') return renderEspejo(o, onDelete);
   const c = o.contenido_json;
   const cab = h('p', { class: 'hint' }, `Dolor: "${c.cluster}" · generado por ${o.generado_por} el ${fmt.fechaHora(o.creado)} · fórmula ${o.formula_version}`);
   const citas = h('div', {}, h('h3', { class: 'sub3' }, 'Evidencia (citas reales)'), ...c.citas.map((x) => h('div', { class: 'cita' }, `«${x.cita}»`, h('small', {}, /^https?:/.test(x.url) ? link(x.url, 'ver origen') : x.url))));
@@ -96,7 +135,10 @@ export async function viewGenerator(app) {
 
   // --- Generados ---
   const outputs = (await db.byProject('outputs', p.id)).sort((a, b) => (a.creado < b.creado ? 1 : -1));
-  if (!outputs.length) out.push(h('section', { class: 'card' }, h('h2', {}, 'Generados'), empty('Aquí aparecerán tus ofertas y guiones.')));
+  out.unshift(h('section', { class: 'card' }, h('h2', {}, '¿Quieres copiar un reel concreto?'),
+    h('p', { class: 'hint' }, 'Usa "Crear mi versión" en la pestaña Reels: replica la estructura, el visual y la edición de un reel que funcionó, adaptado a tu servicio. Aquí abajo están las ofertas y los guiones que salen de los dolores de tu audiencia.'),
+    h('div', { class: 'row' }, btn('Ir a Reels', () => app.go('reels'), 'alt'))));
+  if (!outputs.length) out.push(h('section', { class: 'card' }, h('h2', {}, 'Generados'), empty('Aquí aparecerán tus ofertas, guiones y versiones.')));
   for (const o of outputs) out.push(renderOutput(o, async () => { if (confirm('¿Eliminar este resultado?')) { await db.del('outputs', o.id); await app.render(); } }));
   return out;
 }

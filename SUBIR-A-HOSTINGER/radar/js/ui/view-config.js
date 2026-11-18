@@ -27,10 +27,10 @@ const PROVEEDORES = [
     test: async () => { await ytTest(); return 'Clave válida: YouTube respondió a una consulta real (1 unidad de cuota).'; },
   },
   {
-    id: 'gemini', nombre: 'Gemini (respaldo)', obligatorio: false, para: 'Respaldo si Groq agota su cupo diario. El nivel gratuito puede usar los datos para entrenamiento.',
+    id: 'gemini', nombre: 'Gemini', obligatorio: true, para: 'Mira el video de cada reel y describe toma por toma qué se ve, el texto en pantalla y la edición: sin ella tu versión solo copia lo que se dice. También es el respaldo si Groq agota su cupo. El nivel gratuito puede usar los datos para entrenamiento.',
     pasos: ['Entra en aistudio.google.com.', 'Pulsa "Get API key" → Create API key.', 'Copia la clave y pégala aquí.'],
     url: 'https://aistudio.google.com/apikey',
-    test: async () => { const r = await testProveedor('gemini'); if (r.faltan.length) throw new Error(`La clave funciona, pero el modelo "${r.faltan[0]}" no está en tu cuenta. Disponibles: ${r.ids.filter((x) => /flash/.test(x)).slice(0, 8).join(', ')}.`); return 'Clave válida y modelo disponible.'; },
+    test: async () => { const r = await testProveedor('gemini'); if (r.faltan.length) throw new Error(`La clave funciona, pero estos modelos no están en tu cuenta: ${r.faltan.join(', ')}. Disponibles: ${r.ids.filter((x) => /flash/.test(x)).slice(0, 8).join(', ')}. Cámbialos en "Modelos".`); return 'Clave válida: Gemini puede analizar lo visual de los reels.'; },
   },
   {
     id: 'openrouter', nombre: 'OpenRouter (respaldo)', obligatorio: false, para: 'Tercer recurso, con modelos gratuitos (50 solicitudes al día).',
@@ -47,7 +47,7 @@ export async function viewConfig(app) {
   // --- Claves ---
   const claves = h('section', { class: 'card' },
     h('h2', {}, 'Claves de acceso'),
-    h('p', { class: 'hint' }, 'Todas son gratuitas. Se pegan una sola vez: quedan guardadas en este navegador y se envían únicamente a su proveedor. Para empezar bastan Apify y Groq.'));
+    h('p', { class: 'hint' }, 'Todas son gratuitas. Se pegan una sola vez: quedan guardadas en este navegador y se envían únicamente a su proveedor. Necesitas Apify, Groq y Gemini; YouTube es para buscar los dolores de tu audiencia.'));
   const guardadas = Object.values(s.keys).filter(Boolean).length;
   if (!storageOk()) claves.append(note('bad', 'Este navegador no está guardando datos, por eso las claves se pierden al cerrar. Suele pasar en ventanas de incógnito o privadas, o al abrir el enlace desde dentro de otra app (WhatsApp, Instagram). Abre la app en una ventana normal de Chrome, Safari o Edge.'));
   else if (guardadas) claves.append(note('ok', `${guardadas} clave(s) guardada(s) en este navegador (${location.host}). No tienes que volver a pegarlas mientras uses este mismo navegador y esta misma dirección.`));
@@ -109,7 +109,7 @@ export async function viewConfig(app) {
   const modelos = h('section', { class: 'card' }, h('h2', {}, 'Modelos'),
     h('p', { class: 'hint' }, 'Los nombres de modelo cambian con el tiempo. Si "Probar" avisa de que uno no existe, cámbialo aquí.'));
   const grid = h('div', { class: 'grid2' });
-  const NOMBRES = { groqStt: 'Groq · transcripción', groqLlm: 'Groq · análisis', gemini: 'Gemini', openrouter: 'OpenRouter' };
+  const NOMBRES = { groqStt: 'Groq · transcripción', groqLlm: 'Groq · análisis', gemini: 'Gemini · respaldo de texto', geminiVideo: 'Gemini · análisis del video', openrouter: 'OpenRouter' };
   for (const k of Object.keys(DEFAULT_MODELS)) {
     const i = input({ value: s.models[k] });
     i.addEventListener('change', () => { const cur = getSettings(); saveSettings({ models: { ...cur.models, [k]: i.value.trim() || DEFAULT_MODELS[k] } }); });

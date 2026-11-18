@@ -1,6 +1,8 @@
 // Validación de dolores (sección 4 del plan). Las métricas de cada cluster se calculan en código
 // a partir de las menciones verificadas; el LLM solo propone el nombre del grupo.
 
+import { origenDe } from './normalize.js';
+
 const DAY_MS = 86400000;
 
 /** Lee el CSV que descarga Google Trends ("Interés a lo largo del tiempo"). */
@@ -38,6 +40,7 @@ export function scoreClusters(menciones, clusters, th, nowMs, trend) {
     const ms = menciones.filter((m) => m.cluster_id === cl.id);
     const autores = new Set(ms.map((m) => m.autor_hash)).size;
     const fuentes = [...new Set(ms.map((m) => m.fuente))].sort();
+    const origenes = [...new Set(ms.map((m) => m.origen || origenDe(m.url)))];
     const intensidad = ms.length ? ms.reduce((a, m) => a + m.intensidad, 0) / ms.length : null;
     const pago = ms.length ? ms.filter((m) => m.senal_pago).length / ms.length : null;
     const fechadas = ms.filter((m) => Number.isFinite(Date.parse(m.fecha)));
@@ -45,14 +48,14 @@ export function scoreClusters(menciones, clusters, th, nowMs, trend) {
     const recencia = fechadas.length ? fechadas.filter((m) => Date.parse(m.fecha) >= limite).length / fechadas.length : null;
     const delegar = ms.filter((m) => m.tipo_necesidad === 'delegar').length;
     const aprender = ms.filter((m) => m.tipo_necesidad === 'aprender').length;
-    return { ...cl, n_menciones: ms.length, autores, fuentes, intensidad, pago, recencia, n_fechadas: fechadas.length, delegar, aprender };
+    return { ...cl, n_menciones: ms.length, autores, fuentes, n_origenes: origenes.length, intensidad, pago, recencia, n_fechadas: fechadas.length, delegar, aprender };
   });
   const maxAutores = Math.max(0, ...base.map((c) => c.autores));
   const trendEstado = trend?.estado || 'dato_insuficiente';
   return base
     .map((c) => {
       const criterios = {
-        frecuencia: c.autores >= th.painMinAuthors && c.fuentes.length >= th.painMinSources,
+        frecuencia: c.autores >= th.painMinAuthors && c.n_origenes >= th.painMinSources,
         intensidad: c.intensidad != null && c.intensidad >= th.painMinIntensity,
         pago: c.pago != null && c.pago >= th.painMinPay,
         recencia: c.recencia != null && c.recencia >= th.painMinRecency,

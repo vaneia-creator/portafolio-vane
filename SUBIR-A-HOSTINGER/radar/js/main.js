@@ -50,8 +50,7 @@ export const app = {
       $('activity').classList.add('open');
       $('activityToggle').setAttribute('aria-expanded', 'true');
     } finally {
-      document.body.classList.remove('busy');
-      await app.render();
+      try { await app.render(); } finally { document.body.classList.remove('busy'); }
     }
   },
 

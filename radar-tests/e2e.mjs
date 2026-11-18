@@ -61,7 +61,7 @@ const igReels = (user, base) => Array.from({ length: 36 }, (_, i) => ({
   videoPlayCount: i === 9 ? base * 22 : i === 14 ? base * 4 : base + ((i * 7919) % base), likesCount: i === 5 ? -1 : 300 + i, commentsCount: 20 + i,
   videoDuration: 31.5, caption: `Caption ${i} de ${user}`, videoUrl: `https://cdn.example/${user}${i}.mp4`, isPinned: false,
 }));
-let lastRunInput = null; const runs = {};
+let lastRunInput = null; const runs = {}; let videoDescargas = 0, geminiCalls = 0;
 await page.route('https://api.apify.com/**', async (route) => {
   const req = route.request(); const u = new URL(req.url());
   if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
@@ -73,10 +73,25 @@ await page.route('https://api.apify.com/**', async (route) => {
     return json(route, { data: { id, status: 'RUNNING', defaultDatasetId: `ds_${id}` } }, 201);
   }
   if ((m = u.pathname.match(/\/actor-runs\/(\w+)$/))) return json(route, { data: { id: m[1], status: 'SUCCEEDED', defaultDatasetId: `ds_${m[1]}`, finishedAt: new Date().toISOString(), usageTotalUsd: 0.12 } });
+  if (u.pathname.startsWith('/v2/key-value-stores/kv1/records/')) return route.fulfill({ status: 200, contentType: 'video/mp4', headers: { 'access-control-allow-origin': '*' }, body: Buffer.alloc(300000, 7) });
   if ((m = u.pathname.match(/\/datasets\/ds_(\w+)\/items$/))) {
     const { actor, input } = runs[m[1]];
+    if (actor === 'apify~instagram-profile-scraper' && input.usernames.includes('pegado.uno')) return json(route, [{ username: 'pegado.uno', followersCount: 50000 }, { username: 'pegado.dos', followersCount: 10000 }]);
     if (actor === 'apify~instagram-profile-scraper') return json(route, [{ username: 'ana.coach', followersCount: 8000, private: false }, { username: 'grande', followersCount: 2000000 }, { error: 'not_found', errorDescription: 'Profile does not exist' }]);
-    if (actor === 'apify~instagram-reel-scraper') { assert.deepEqual(input.username, ['ana.coach', 'grande']); assert.equal(input.resultsLimit, 36); return json(route, [...igReels('ana.coach', 9000), ...igReels('grande', 400000).slice(0, 10), { error: 'not_found' }]); }
+    if (actor === 'apify~instagram-reel-scraper') {
+      if (input.includeDownloadedVideo) { // "Crear mi versión": descarga el video del reel elegido
+        assert.equal(input.username.length, 1); const code = input.username[0].match(/reel\/([^/]+)/)[1]; videoDescargas++;
+        return json(route, [{ shortCode: code, ownerUsername: 'pegado.uno', timestamp: new Date(NOW - 40 * DAY).toISOString(), videoPlayCount: 1500000, likesCount: 90000, commentsCount: 800, videoDuration: 31.5, caption: 'Caption del pegado', downloadedVideo: `https://api.apify.com/v2/key-value-stores/kv1/records/video-${code}` }]);
+      }
+      if (input.username.every((x) => /instagram\.com\/reel\//.test(x))) { // reels pegados por enlace
+        assert.deepEqual(input.username, ['https://www.instagram.com/reel/PEG1/', 'https://www.instagram.com/reel/PEG2/']);
+        return json(route, [
+          { shortCode: 'PEG1', ownerUsername: 'pegado.uno', timestamp: new Date(NOW - 400 * DAY).toISOString(), videoPlayCount: 1200000, likesCount: 80000, commentsCount: 700, videoDuration: 31.5, caption: 'Caption del pegado', videoUrl: 'https://cdn.example/peg1.mp4' },
+          { shortCode: 'PEG2', ownerUsername: 'pegado.dos', timestamp: new Date(NOW - 2 * DAY).toISOString(), videoPlayCount: 300000, likesCount: -1, commentsCount: 90, videoDuration: 20, caption: 'Otro', videoUrl: 'https://cdn.example/peg2.mp4' },
+        ]);
+      }
+      assert.deepEqual(input.username, ['ana.coach', 'grande']); assert.equal(input.resultsLimit, 36); return json(route, [...igReels('ana.coach', 9000), ...igReels('grande', 400000).slice(0, 10), { error: 'not_found' }]);
+    }
     if (actor === 'apify~instagram-comment-scraper') return json(route, Array.from({ length: 18 }, (_, i) => ({ id: `ig${i}`, text: `Me pasa igual, llevo meses sin conseguir clientes y ya pagué ${100 + i} euros por un curso que no sirvió`, ownerUsername: `iguser${i}`, timestamp: new Date(NOW - 20 * DAY).toISOString(), postUrl: input.directUrls[0] })));
   }
   return json(route, { error: { message: `ruta no simulada ${u.pathname}` } }, 500);
@@ -84,7 +99,7 @@ await page.route('https://api.apify.com/**', async (route) => {
 const palabras = 'Si eres coach y publicas cada día pero nadie te escribe, mira esto. El error es hablar de ti y no de su problema. Cambia la primera frase por su dolor exacto. Sígueme para ver el ejemplo.'.split(' ');
 await page.route('https://api.groq.com/openai/v1/audio/transcriptions', (route) => {
   const body = route.request().postData() || '';
-  assert.match(body, /name="url"\s+https:\/\/cdn\.example\//); assert.match(body, /verbose_json/); assert.match(body, /timestamp_granularities\[\]"\s+word/);
+  assert.ok(/name="url"\s+https:\/\/cdn\.example\//.test(body) || /name="file"; filename="reel\.mp4"/.test(body), 'URL o archivo de video'); assert.match(body, /verbose_json/); assert.match(body, /timestamp_granularities\[\]"\s+word/);
   return json(route, { text: palabras.join(' '), language: 'spanish', duration: 31.5, words: palabras.map((w, i) => ({ word: w, start: i * 0.45, end: i * 0.45 + 0.4 })) });
 });
 let llmCalls = 0;
@@ -113,8 +128,30 @@ await page.route('https://api.groq.com/openai/v1/chat/completions', (route) => {
     { t_inicio_s: 3, t_fin_s: 20, texto_hablado: 'Publicas a diario y llevas meses sin clientes', texto_pantalla: 'Meses sin clientes', indicacion_visual: 'Corte', funcion: 'DOL', patron_id: ids[1] },
     { t_inicio_s: 20, t_fin_s: 28, texto_hablado: 'Sígueme y te enseño la plantilla', texto_pantalla: 'Sígueme', indicacion_visual: 'Señala', funcion: 'CTA', patron_id: 'P99' },
   ], caption: 'Meses publicando sin clientes #coaching #ventas' }; }
+  else if (u.includes('MI VERSIÓN de este reel')) {
+    const ids = [...u.matchAll(/^(B\d+) \| /gm)].map((x) => x[1]);
+    assert.ok(ids.length >= 3, 'el prompt lista las tomas del original'); assert.match(u, /pantalla grabada/); assert.match(u, /Creo bots de WhatsApp/);
+    out = { filas: ids.map((id, k) => ({ toma: id, que_grabas: k === 1 ? 'Grabación de pantalla de mi panel de bots' : 'Primer plano a cámara', edicion: 'Corte seco y subtítulos palabra a palabra', texto_hablado: k === ids.length - 1 ? 'Escríbeme BOT y te monto el tuyo' : k === 1 ? 'Así contesta tu bot mientras duermes' : 'Si tu negocio responde tarde, pierdes ventas', texto_pantalla: k === 1 ? 'BOT 24/7' : '', funcion: k === ids.length - 1 ? 'CTA' : k === 1 ? 'ESP' : 'DOL', que_cambia: 'Herramienta y beneficio de mi servicio' })),
+      caption: 'Tu negocio vende mientras duermes #ia #whatsapp', actualizaciones: [{ original: 'Herramienta Vieja 1.0', actual: 'Herramienta Nueva 3', motivo: 'la anterior se retiró', verificar: true }], lista_de_grabacion: ['Grabar pantalla del panel'], que_ensena: 'Cómo responde un bot de WhatsApp' };
+  }
   else out = { hashtags: ['coaching'] };
   return json(route, { model: b.model, choices: [{ message: { content: JSON.stringify(out) } }], usage: { total_tokens: 900 } });
+});
+await page.route('https://generativelanguage.googleapis.com/**', (route) => {
+  const req = route.request(); const u = new URL(req.url());
+  if (req.method() === 'GET') return json(route, { models: ['gemini-flash-latest', 'gemini-flash-lite-latest'].map((n) => ({ name: `models/${n}`, supportedGenerationMethods: ['generateContent'] })) });
+  geminiCalls++;
+  assert.equal(u.searchParams.get('key'), 'gem_test'); assert.match(u.pathname, /gemini-flash-latest:generateContent$/);
+  const b = req.postDataJSON(); const part = b.contents[0].parts[0].inlineData;
+  assert.equal(part.mimeType, 'video/mp4'); assert.equal(Buffer.from(part.data, 'base64').length, 300000, 'el video llega completo a Gemini');
+  const out = { global: { formato: 'Persona a cámara que alterna con grabación de pantalla', subtitulos: 'Palabra a palabra, amarillos, centro', musica: 'Lo-fi suave', gancho_visual: 'Señala a cámara con texto ERROR', que_ensena: 'Cómo escribir la primera frase', herramientas_mencionadas: [{ nombre: 'Herramienta Vieja 1.0', para_que: 'escribir' }], llamado_accion: 'Seguir la cuenta' },
+    tomas: [
+      { t_inicio_s: 0, t_fin_s: 1.4, plano: 'primer plano a cámara', que_se_ve: 'Señala a cámara', texto_en_pantalla: 'EL ERROR', edicion: 'zoom rápido', audio: 'voz', voz: 'Si eres coach' },
+      { t_inicio_s: 1.4, t_fin_s: 10.8, plano: 'pantalla grabada del móvil', que_se_ve: 'Desplaza un perfil', texto_en_pantalla: 'Nadie te escribe', edicion: 'flecha y círculo', audio: 'voz y música', voz: '' },
+      { t_inicio_s: 10.8, t_fin_s: 17, plano: 'primer plano a cámara', que_se_ve: 'Habla y señala abajo', texto_en_pantalla: '', edicion: 'corte seco', audio: 'voz', voz: '' },
+      { t_inicio_s: 16, t_fin_s: 99, plano: 'solapada' },
+    ] };
+  return json(route, { modelVersion: 'gemini-flash-latest', candidates: [{ content: { parts: [{ text: JSON.stringify(out) }] } }] });
 });
 await page.route('https://www.googleapis.com/youtube/v3/**', (route) => {
   const u = new URL(route.request().url()); assert.equal(u.searchParams.get('key'), 'yt_test');
@@ -123,20 +160,20 @@ await page.route('https://www.googleapis.com/youtube/v3/**', (route) => {
   return json(route, { items: Array.from({ length: 20 }, (_, i) => ({ snippet: { videoId: vid, topLevelComment: { id: `${vid}_c${i}`, snippet: { videoId: vid, textOriginal: i % 4 === 3 ? 'Gran video, gracias' : `Yo publico todos los días y no consigo clientes, caso ${i}`, authorChannelId: { value: `UC${vid}${i}` }, publishedAt: new Date(NOW - 40 * DAY).toISOString() } } } })) });
 });
 
-for (const [n, v] of [['Apify', 'apify_test'], ['Groq', 'gsk_test'], ['YouTube Data API', 'yt_test']]) { await keyInput(n).fill(v); await page.waitForTimeout(150); }
+for (const [n, v] of [['Apify', 'apify_test'], ['Groq', 'gsk_test'], ['YouTube Data API', 'yt_test'], ['Gemini', 'gem_test']]) { await keyInput(n).fill(v); await page.waitForTimeout(150); }
 // Las claves persisten: se guardan al escribir y siguen ahí tras cerrar y volver a abrir la app.
 await page.reload(); await page.waitForSelector('#tabs button[aria-current="page"]:has-text("1 · Proyecto")');
 await tab('Configuración'); await page.waitForSelector('h2:has-text("Claves de acceso")');
 assert.equal(await keyInput('Apify').inputValue(), 'apify_test'); assert.equal(await keyInput('Groq').inputValue(), 'gsk_test');
-assert.match(await page.locator('section.card', { hasText: 'Claves de acceso' }).textContent(), /3 clave\(s\) guardada\(s\) en este navegador/);
+assert.match(await page.locator('section.card', { hasText: 'Claves de acceso' }).textContent(), /4 clave\(s\) guardada\(s\) en este navegador/);
 const page2 = await ctx.newPage(); await page2.goto('http://localhost:8765/radar/'); await page2.waitForSelector('#tabs button[aria-current="page"]:has-text("1 · Proyecto")');
 await page2.close();
 console.log('OK las claves persisten tras recargar y al abrir la app en otra pestaña (ya no arranca en Configuración)');
 
 await tab('1 · Proyecto');
-await page.fill('input[placeholder^="Ej.: conseguir clientes"]', 'Conseguir clientes para coaches de salud');
-await page.fill('input[placeholder^="Ej.: marketing"]', 'Marketing con IA para coaches');
-await page.fill('input[placeholder^="Ej.: coaches"]', 'Coaches de salud que venden por Instagram');
+await page.fill('input[placeholder^="Ej.: automatizar"]', 'Conseguir clientes para coaches de salud');
+await page.fill('input[placeholder^="Ej.: creo bots"]', 'Creo bots de WhatsApp con IA para coaches');
+await page.fill('input[placeholder^="Ej.: dueños"]', 'Coaches de salud que venden por Instagram');
 await page.click('button:has-text("Crear proyecto")');
 await page.waitForSelector('h2:has-text("Referentes")');
 for (const hdl of ['@Ana.Coach', 'https://www.instagram.com/grande/', 'noexiste']) { await page.fill('input[aria-label="Usuario del referente"]', hdl); await page.click('button:has-text("Añadir referente")'); await page.waitForTimeout(200); }
@@ -144,43 +181,52 @@ assert.equal(await page.locator('section.card:has(h2:has-text("Referentes")) tbo
 console.log('OK proyecto y 3 referentes');
 
 await tab('2 · Reels virales');
-await page.fill('section.card:has(h2:has-text("Métricas de los reels")) input[type=number]', '36'); await page.keyboard.press('Tab'); await page.waitForTimeout(300);
-await run('Traer métricas');
-const rows = page.locator('section.card:has(h2:has-text("Ranking de viralidad")) .tableWrap').first().locator('tbody tr');
+// Opción 1: reels pegados por enlace (de cualquier fecha)
+await page.fill('textarea[placeholder^="https://www.instagram.com/reel/"]', 'https://www.instagram.com/reel/PEG1/?igsh=abc\nhttps://instagram.com/pegado.dos/reel/PEG2/\nhttps://www.instagram.com/pegado.uno/\nhola');
+await run('Traer estos reels');
+const opc1 = page.locator('section.card:has(h2:has-text("Opción 1"))');
+assert.equal(await opc1.locator('tbody tr').count(), 2, await lastLog());
+const t1 = await opc1.textContent();
+assert.match(t1, /1\.200\.000/); assert.match(t1, /24,0×/); assert.match(t1, /oculto/);
+assert.match(await page.$$eval('#activityLog li', (l) => l.map((x) => x.textContent).join('\n')), /no son enlaces de reel[^\n]*pegado\.uno\/, hola/);
+console.log('OK reels por enlace: 2 traídos (uno de hace 400 días y otro de 2 días), enlaces inválidos ignorados, seguidores y vistas÷seguidores');
+
+// Crear mi versión: descarga el video, transcribe, Gemini mira las tomas y escribe la versión adaptada
+await opc1.locator('tbody tr').first().locator('button:has-text("Crear mi versión")').click();
+await page.waitForTimeout(200); await idle();
+await page.waitForSelector('#miVersion');
+assert.equal(videoDescargas, 1); assert.equal(geminiCalls, 1);
+const ver = await page.locator('#miVersion').textContent();
+assert.match(ver, /Tu versión para Instagram Reels/); assert.match(ver, /Misma estructura que el original: 3 tomas, 17 s/, ver.slice(0, 800));
+assert.match(ver, /pantalla grabada del móvil/); assert.match(ver, /Grabación de pantalla de mi panel de bots/); assert.match(ver, /Escríbeme BOT/);
+assert.match(ver, /Herramienta Vieja 1\.0 → Herramienta Nueva 3/); assert.match(ver, /Comprueba que sigan vigentes/);
+const det = await page.locator('#reelDetail').textContent();
+assert.match(det, /Cómo está hecho \(toma a toma\)/); assert.match(det, /Palabra a palabra, amarillos/); assert.match(det, /«EL ERROR»/); assert.match(det, /1,8 cortes \/ 10 s/);
+assert.match(await page.$$eval('#activityLog li', (l) => l.map((x) => x.textContent).join('\n')), /Video recibido en memoria \(0\.3 MB/);
+await page.locator('#reelDetail').screenshot({ path: `${SHOTS}/detalle.png` });
+await page.locator('#miVersion').screenshot({ path: `${SHOTS}/mi-version.png` });
+console.log('OK crear mi versión: video descargado → transcripción → Gemini toma a toma → guion espejo validado con actualización de herramienta');
+
+// Opción 2: ranking de referentes
+await page.fill('section.card:has(h2:has-text("Opción 2")) input[type=number]', '36'); await page.keyboard.press('Tab'); await page.waitForTimeout(300);
+await run('Revisar 3 cuenta(s)');
+const rows = page.locator('section.card:has(h2:has-text("Opción 2")) .tableWrap').nth(1).locator('tbody tr');
 assert.equal(await rows.count(), 10, await lastLog());
 const primera = await rows.first().textContent();
 assert.match(primera, /Mega-viral/); assert.match(primera, /@ana\.coach/);
-const base = await page.locator('section.card:has(h2:has-text("Base de cálculo"))').textContent();
-assert.match(base, /Muestra insuficiente/);
 const orden1 = await rows.allTextContents();
-await page.reload(); await page.waitForSelector('h2:has-text("Ranking de viralidad")');
-assert.deepEqual(await page.locator('section.card:has(h2:has-text("Ranking de viralidad")) .tableWrap').first().locator('tbody tr').allTextContents(), orden1);
-console.log('OK ranking: top 10, Mega-viral primero, muestra insuficiente detectada, idéntico tras recargar');
+await page.reload(); await page.waitForSelector('h2:has-text("Opción 2")');
+assert.deepEqual(await page.locator('section.card:has(h2:has-text("Opción 2")) .tableWrap').nth(1).locator('tbody tr').allTextContents(), orden1);
 await page.screenshot({ path: `${SHOTS}/reels.png`, fullPage: true });
-
-await page.click('button:has-text("Transcribir y analizar los 5 primeros")'); await page.waitForTimeout(200); await idle();
-await page.locator('section.card:has(h2:has-text("Ranking de viralidad")) button:has-text("Abrir")').first().click();
-await page.waitForSelector('#reelDetail .seg');
-assert.equal(await page.locator('#reelDetail .seg').count(), 5, 'el segmento con índices fuera de rango se descarta');
-const det = await page.locator('#reelDetail').textContent();
-assert.match(det, /«Si eres coach»/); assert.match(det, /0:00\.0 → 0:01\.3/); assert.match(det, /patrón descartado: copia la frase original/); assert.match(det, /1 palabra\(s\) gatillo descartadas/);
-assert.match(await page.locator('#reelDetail iframe').getAttribute('src'), /^https:\/\/www\.instagram\.com\/reel\/ana\.coach9\/embed\/$/);
-console.log('OK transcripción + anotación verificada (texto y tiempos de la transcripción, inventos descartados)');
-await page.locator('#reelDetail').screenshot({ path: `${SHOTS}/detalle.png` });
+console.log('OK ranking de referentes: top 10 con Mega-viral primero, idéntico tras recargar');
 
 await tab('3 · Dolores');
-await run('Generar consultas con IA');
-await run('Recoger comentarios de YouTube');
-await run('Recoger comentarios de los reels');
-await page.fill('textarea[placeholder^="Pega aquí"]', 'Llevo un año intentando vender mis sesiones y no consigo clientes por ningún lado\nOtra persona que tampoco logra nada con sus publicaciones diarias');
-await page.click('button:has-text("Añadir textos")'); await page.waitForTimeout(300);
-await run('Extraer dolores');
-await run('Agrupar dolores');
-const tablero = await page.locator('section.card:has(h2:has-text("4 · Dolores validados"))').textContent();
-assert.match(tablero, /1 dolor\(es\) pasan todos los umbrales/, tablero.slice(0, 600));
+await run('Buscar dolores automáticamente');
+const tablero = await page.locator('section.card:has(h2:has-text("Dolores validados"))').textContent();
+assert.match(tablero, /1 dolor\(es\) pasan todos los umbrales/, (await lastLog()) + tablero.slice(0, 600));
 assert.match(tablero, /válido → infoproducto/); assert.match(tablero, /Google Trends sin verificar/); assert.match(tablero, /señal de pago: «pagué 1\d\d euros por un curso»/);
 const stored = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('radar-dolores-reels'); r.onsuccess = () => { const q = r.result.transaction('comments').objectStore('comments').getAll(); q.onsuccess = () => res(q.result); }; }));
-assert.ok(stored.length >= 50); assert.ok(stored.every((c) => c.procesado && c.texto === '' && /^[0-9a-f]{16}$/.test(c.autor_hash) && !('autor' in c)), 'texto borrado y autor anonimizado');
+assert.ok(stored.length >= 50); assert.ok(stored.filter((c) => c.procesado).every((c) => c.texto === '') && stored.every((c) => /^[0-9a-f]{16}$/.test(c.autor_hash) && !('autor' in c)), 'texto borrado y autor anonimizado');
 console.log(`OK dolores: ${stored.length} comentarios leídos, citas literales, texto borrado tras extraer, autores anonimizados`);
 await page.screenshot({ path: `${SHOTS}/dolores.png`, fullPage: true });
 
@@ -202,7 +248,7 @@ console.log('OK informe con procedencia');
 
 await page.setViewportSize({ width: 390, height: 800 });
 await tab('2 · Reels virales');
-await page.waitForSelector('h2:has-text("Ranking de viralidad")');
+await page.waitForSelector('h2:has-text("Opción 2")');
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 assert.ok(overflow <= 1, `desborde horizontal en móvil: ${overflow}px`);
 await page.screenshot({ path: `${SHOTS}/movil.png` });

@@ -3,7 +3,7 @@
 
 export const DEFAULT_THRESHOLDS = Object.freeze({
   // Viralidad
-  minAgeDays: 7, // reels con menos días se excluyen del ranking
+  minAgeDays: 0, // 0 = no se excluye ningún reel por ser reciente
   minReels: 12, // mínimo de reels elegibles por creador
   medianWindow: 30, // últimos N reels elegibles para la mediana
   megaOS: 10,
@@ -29,7 +29,7 @@ export const DEFAULT_THRESHOLDS = Object.freeze({
 });
 
 export const THRESHOLD_LABELS = {
-  minAgeDays: 'Antigüedad mínima del reel (días)',
+  minAgeDays: 'Antigüedad mínima del reel en días (0 = incluir todos)',
   minReels: 'Mínimo de reels elegibles por creador',
   medianWindow: 'Reels usados para la mediana',
   megaOS: 'Mega-viral: OS mínimo',
@@ -41,7 +41,7 @@ export const THRESHOLD_LABELS = {
   wOS: 'Peso de ln(OS) en el Score',
   wEV: 'Peso del percentil de EV en el Score',
   painMinAuthors: 'Dolor válido: autores distintos mínimos',
-  painMinSources: 'Dolor válido: fuentes distintas mínimas',
+  painMinSources: 'Dolor válido: videos o publicaciones de origen distintos',
   painMinIntensity: 'Dolor válido: intensidad media mínima (1–5)',
   painMinPay: 'Dolor válido: fracción mínima con señal de pago',
   painMinRecency: 'Dolor válido: fracción mínima de menciones recientes',
@@ -59,12 +59,12 @@ function djb2(str) {
   return h.toString(16).padStart(8, '0');
 }
 
-/** Versión de fórmula: "v1" con los umbrales por defecto; "v1-<hash>" si se calibraron. */
+/** Versión de fórmula: "v2" con los umbrales por defecto; "v2-<hash>" si se calibraron. */
 export function formulaVersion(th) {
   const keys = Object.keys(DEFAULT_THRESHOLDS);
   const same = keys.every((k) => Number(th[k]) === DEFAULT_THRESHOLDS[k]);
-  if (same) return 'v1';
-  return 'v1-' + djb2(keys.map((k) => `${k}=${Number(th[k])}`).join(';'));
+  if (same) return 'v2';
+  return 'v2-' + djb2(keys.map((k) => `${k}=${Number(th[k])}`).join(';'));
 }
 
 export const TAXONOMY = Object.freeze({
@@ -132,11 +132,11 @@ export const NETWORKS = Object.freeze({
 // Actores de Apify (esquemas de entrada/salida verificados contra la API de Apify el 2026-11-14).
 // usdPorResultado = tarifa del plan Free publicada por cada actor en esa fecha.
 export const ACTORS = Object.freeze({
-  igReels: { id: 'apify~instagram-reel-scraper', usdPorResultado: 0.0026, usdInicio: 0.001 },
+  igReels: { id: 'apify~instagram-reel-scraper', usdPorResultado: 0.0026, usdInicio: 0.001, usdPorMBVideo: 0.02 },
   igProfiles: { id: 'apify~instagram-profile-scraper', usdPorResultado: 0.0026, usdInicio: 0 },
   igComments: { id: 'apify~instagram-comment-scraper', usdPorResultado: 0.0026, usdInicio: 0 },
   igHashtag: { id: 'apify~instagram-hashtag-scraper', usdPorResultado: 0.0026, usdInicio: 0 },
-  ttVideos: { id: 'clockworks~tiktok-scraper', usdPorResultado: 0.0037, usdInicio: 0 },
+  ttVideos: { id: 'clockworks~tiktok-scraper', usdPorResultado: 0.0037, usdInicio: 0.001, usdPorVideo: 0.0013 },
   ttComments: { id: 'clockworks~tiktok-comments-scraper', usdPorResultado: 0.00125, usdInicio: 0 },
 });
 
@@ -154,6 +154,7 @@ export const DEFAULT_MODELS = Object.freeze({
   groqStt: 'whisper-large-v3-turbo',
   groqLlm: 'openai/gpt-oss-120b',
   gemini: 'gemini-flash-lite-latest',
+  geminiVideo: 'gemini-flash-latest',
   openrouter: 'openrouter/free',
 });
 

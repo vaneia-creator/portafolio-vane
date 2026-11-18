@@ -3,6 +3,7 @@
 import { fetchJSON, ApiError } from './http.js';
 import { getSettings, bump, overLimit } from './store.js';
 import { normYtThread } from '../core/normalize.js';
+import { parseJSON } from './llm.js';
 
 const GROQ_STT = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MAX_BYTES = 25 * 1024 * 1024; // tope de Groq en la capa gratuita
@@ -107,4 +108,51 @@ export async function ytTest() {
   bump('youtube', { units: 1 });
   const r = await fetchJSON(`${YT}/videos?${q}`, {}, { proveedor: 'YouTube', reintentos: 0 });
   return { ok: Array.isArray(r?.items) };
+}
+
+// ---------- Gemini: análisis visual del video ----------
+const GEMINI_MAX_BYTES = 14 * 1024 * 1024; // el pedido completo (video en base64 + texto) debe quedar por debajo de 20 MB
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(new Error('no se pudo leer el video en memoria'));
+    r.readAsDataURL(blob);
+  });
+}
+
+/** Envía el video a Gemini y devuelve el JSON que pide el prompt. Prueba el modelo de video y, si falla, el de respaldo. */
+export async function geminiVideo(blob, { system, user }, onLog) {
+  const s = getSettings();
+  if (!s.keys.gemini) throw new ApiError('Gemini', 0, 'Falta la clave de Gemini (Configuración). Sin ella no se puede analizar lo visual.');
+  if (blob.size > GEMINI_MAX_BYTES) throw new ApiError('Gemini', 0, `El video pesa ${(blob.size / 1048576).toFixed(1)} MB; Gemini admite hasta 14 MB enviados directamente.`);
+  const data = await blobToBase64(blob);
+  const mimeType = /^video\//.test(blob.type) ? blob.type : 'video/mp4';
+  const modelos = [s.models.geminiVideo, s.models.gemini].filter((m, i, a) => m && a.indexOf(m) === i);
+  const errores = [];
+  for (const modelo of modelos) {
+    const tope = overLimit('gemini', { requests: 1 });
+    if (tope) throw new ApiError('Gemini', 0, tope);
+    try {
+      bump('gemini', { requests: 1 });
+      const r = await fetchJSON(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent?key=${encodeURIComponent(s.keys.gemini)}`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: system }] },
+            contents: [{ role: 'user', parts: [{ inlineData: { mimeType, data } }, { text: user }] }],
+            generationConfig: { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 8192 },
+          }),
+        }, { proveedor: 'Gemini', reintentos: 2, onWait: (ms) => onLog?.(`Gemini pide esperar ${Math.ceil(ms / 1000)} s…`) });
+      const texto = (r?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+      if (!texto) throw new Error(`respuesta vacía${r?.candidates?.[0]?.finishReason ? ` (${r.candidates[0].finishReason})` : ''}`);
+      return { json: parseJSON(texto), modelo: r?.modelVersion || modelo };
+    } catch (e) {
+      errores.push(`${modelo}: ${e.message}`);
+      if (modelos.at(-1) !== modelo) onLog?.(`Gemini ${modelo} falló (${e.message}); pruebo con ${modelos.at(-1)}.`);
+    }
+  }
+  throw new ApiError('Gemini', 0, errores.join(' | '));
 }

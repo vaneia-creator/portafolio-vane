@@ -145,6 +145,7 @@ export function verifyPainItems(comentarios, items) {
       fuente: c.fuente,
       url: c.url,
       autor_hash: c.autor_hash,
+      origen: c.origen || null,
       fecha: c.fecha || null,
       cita_corta: cita,
       dolor_norm: dolor,
@@ -194,4 +195,80 @@ export function validateScript(guion, red, patronIds, transcripts) {
   const [a, b] = red.duracionRecomendadaS;
   if (fin && (fin < a || fin > b)) problemas.push({ nivel: 'aviso', msg: `Duración de ${fin} s fuera del rango de referencia ${a}–${b} s. ${red.notaDuracion}` });
   return { duracion_s: fin, hashtags: tags.length, caption_chars: caption.length, problemas, ok: !problemas.some((p) => p.nivel === 'error') };
+}
+
+const txt = (v) => (typeof v === 'string' ? v.trim() : '');
+const r1 = (n) => Math.round(n * 10) / 10;
+
+/** Palabras de la transcripción que empiezan dentro de [a, b) segundos. */
+export function wordsInRange(words, a, b) {
+  return (words || []).filter((w) => w.start >= a - 0.05 && w.start < b).map((w) => String(w.word).trim()).join(' ');
+}
+
+/**
+ * Limpia el desglose visual que devuelve Gemini: tomas ordenadas, sin solapes y dentro de la duración real.
+ * Los cortes por cada 10 s se calculan en código.
+ */
+export function buildVisual(json, durS) {
+  const lim = Number.isFinite(durS) && durS > 0 ? durS + 1 : Infinity;
+  const raw = (Array.isArray(json?.tomas) ? json.tomas : [])
+    .map((t) => ({ ...t, a: Number(t?.t_inicio_s), b: Number(t?.t_fin_s) }))
+    .filter((t) => Number.isFinite(t.a) && Number.isFinite(t.b))
+    .sort((x, y) => x.a - y.a);
+  const tomas = [];
+  let prev = 0, descartadas = (Array.isArray(json?.tomas) ? json.tomas.length : 0) - raw.length;
+  for (const t of raw) {
+    const a = Math.max(t.a, prev), b = Math.min(t.b, lim);
+    if (t.a < 0 || t.a >= lim || b - a < 0.2 || t.a < prev - 0.5) { descartadas++; continue; }
+    prev = b;
+    tomas.push({ id: `B${tomas.length + 1}`, t_inicio_s: r1(a), t_fin_s: r1(b), plano: txt(t.plano), que_se_ve: txt(t.que_se_ve),
+      texto_en_pantalla: txt(t.texto_en_pantalla), edicion: txt(t.edicion), audio: txt(t.audio), voz: txt(t.voz) });
+    if (tomas.length >= 40) break;
+  }
+  const g = json?.global || {};
+  const fin = tomas.length ? tomas[tomas.length - 1].t_fin_s : null;
+  return {
+    tomas, descartadas,
+    formato: txt(g.formato), subtitulos: txt(g.subtitulos), musica: txt(g.musica), gancho_visual: txt(g.gancho_visual),
+    que_ensena: txt(g.que_ensena), llamado_accion: txt(g.llamado_accion),
+    herramientas: (Array.isArray(g.herramientas_mencionadas) ? g.herramientas_mencionadas : [])
+      .map((x) => ({ nombre: txt(x?.nombre), para_que: txt(x?.para_que) })).filter((x) => x.nombre).slice(0, 15),
+    cortes_por_10s: fin ? r1((tomas.length / fin) * 10) : null,
+  };
+}
+
+/** Comprueba "mi versión": una fila por cada toma del original, sin copiar frases y dentro de los límites de la red. */
+export function validateEspejo(json, tomas, red, fuentesTexto) {
+  const problemas = [];
+  const filas = [];
+  const recibidas = Array.isArray(json?.filas) ? json.filas : [];
+  const porId = new Map(recibidas.map((f) => [String(f?.toma || '').trim().toUpperCase(), f]));
+  for (const t of tomas) {
+    const f = porId.get(t.id);
+    if (!f) { problemas.push({ nivel: 'error', msg: `Falta la toma ${t.id} (${t.t_inicio_s}–${t.t_fin_s} s).` }); continue; }
+    const fn = String(f.funcion || '').trim().toUpperCase();
+    const fila = { toma: t.id, t_inicio_s: t.t_inicio_s, t_fin_s: t.t_fin_s, original: t,
+      texto_hablado: txt(f.texto_hablado), texto_pantalla: txt(f.texto_pantalla), que_grabas: txt(f.que_grabas),
+      edicion: txt(f.edicion), funcion: TAXONOMY_CODES.includes(fn) ? fn : null, que_cambia: txt(f.que_cambia) };
+    if (!fila.funcion) problemas.push({ nivel: 'aviso', msg: `${t.id}: función "${f.funcion || ''}" fuera de la taxonomía.` });
+    for (const src of fuentesTexto.filter(Boolean)) {
+      const copia = sharesRun(fila.texto_hablado, src, 6) || sharesRun(fila.texto_pantalla, src, 6);
+      if (copia) { problemas.push({ nivel: 'error', msg: `${t.id}: copia una frase del original ("${copia}").` }); break; }
+    }
+    const h = hedges(`${fila.texto_hablado} ${fila.texto_pantalla}`);
+    if (h.length) problemas.push({ nivel: 'aviso', msg: `${t.id}: lenguaje dubitativo (${h.join(', ')}).` });
+    filas.push(fila);
+  }
+  const ids = new Set(tomas.map((t) => t.id));
+  const sobran = recibidas.filter((f) => !ids.has(String(f?.toma || '').trim().toUpperCase())).length;
+  if (sobran) problemas.push({ nivel: 'aviso', msg: `${sobran} fila(s) extra no corresponden a ninguna toma del original y se descartaron.` });
+  const caption = txt(json?.caption);
+  const lim = red.limites;
+  if (caption.length > lim.captionMax) problemas.push({ nivel: 'error', msg: `Caption de ${caption.length} caracteres; el máximo es ${lim.captionMax}.` });
+  const tags = caption.match(HASHTAG_RE) || [];
+  if (lim.hashtagsMax != null && tags.length > lim.hashtagsMax) problemas.push({ nivel: 'error', msg: `${tags.length} hashtags; el máximo es ${lim.hashtagsMax}.` });
+  if (!filas.some((f) => f.funcion === 'CTA')) problemas.push({ nivel: 'aviso', msg: 'Ninguna toma lleva el llamado a la acción hacia tu servicio.' });
+  const dur = tomas.length ? tomas[tomas.length - 1].t_fin_s : 0;
+  if (dur > lim.duracionMaxS) problemas.push({ nivel: 'aviso', msg: `El original dura ${dur} s y ${red.nombre} admite ${lim.duracionMaxS} s.` });
+  return { filas, caption, hashtags: tags.length, duracion_s: dur, problemas, ok: !problemas.some((p) => p.nivel === 'error') };
 }
